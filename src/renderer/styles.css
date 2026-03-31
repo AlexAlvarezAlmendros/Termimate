@@ -1,0 +1,63 @@
+@import 'tailwindcss';
+
+@theme {
+  --color-background: #131313;
+  --color-surface: #131313;
+  --color-surface-dim: #131313;
+  --color-surface-bright: #393939;
+  --color-surface-container-lowest: #0e0e0e;
+  --color-surface-container-low: #1c1b1b;
+  --color-surface-container: #201f1f;
+  --color-surface-container-high: #2a2a2a;
+  --color-surface-container-highest: #353534;
+  --color-on-background: #e5e2e1;
+  --color-on-surface: #e5e2e1;
+  --color-on-surface-variant: #bec7d4;
+  --color-primary: #98cbff;
+  --color-primary-container: #00a3ff;
+  --color-on-primary: #003354;
+  --color-on-primary-container: #00375a;
+  --color-primary-fixed-dim: #98cbff;
+  --color-secondary: #5dff3b;
+  --color-secondary-container: #30e200;
+  --color-on-secondary: #063900;
+  --color-on-secondary-container: #0f5e00;
+  --color-secondary-fixed-dim: #34e507;
+  --color-tertiary: #ffba43;
+  --color-tertiary-container: #d19000;
+  --color-on-tertiary: #432c00;
+  --color-on-tertiary-container: #482f00;
+  --color-error: #ffb4ab;
+  --color-error-container: #93000a;
+  --color-on-error: #690005;
+  --color-on-error-container: #ffdad6;
+  --color-outline: #88919d;
+  --color-outline-variant: #3f4852;
+  --color-inverse-surface: #e5e2e1;
+  --color-inverse-on-surface: #313030;
+  --color-inverse-primary: #00629d;
+  --color-surface-tint: #98cbff;
+
+  --font-headline: 'Space Grotesk', sans-serif;
+  --font-body: 'Inter', sans-serif;
+  --font-mono: 'Fira Code', monospace;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-outline-variant);
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Terminal selection */
+::selection {
+  background: rgba(152, 203, 255, 0.3);
+}

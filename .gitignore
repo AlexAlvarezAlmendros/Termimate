@@ -1,3 +1,7 @@
+# Electron build output
+out/
+dist/
+
 # Logs
 logs
 *.log
