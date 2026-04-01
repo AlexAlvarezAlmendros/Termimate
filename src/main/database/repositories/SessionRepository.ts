@@ -1,6 +1,6 @@
 import { v4 as uuid } from 'uuid';
 import { DatabaseManager } from '../DatabaseManager';
-import type { Session, CreateSessionDTO } from '../../../shared/types/session.types';
+import type { Session, CreateSessionDTO, UpdateSessionDTO } from '../../../shared/types/session.types';
 import { DEFAULT_SHELL } from '../../../shared/constants';
 
 export class SessionRepository {
@@ -27,7 +27,7 @@ export class SessionRepository {
   create(dto: CreateSessionDTO): Session {
     const id = uuid();
     const now = Date.now();
-    const name = dto.name ?? `Session ${now}`;
+    const name = dto.name ?? `NewSession`;
 
     this.db
       .prepare(
@@ -43,6 +43,24 @@ export class SessionRepository {
         dto.envVars ? JSON.stringify(dto.envVars) : null,
         now,
         now,
+      );
+
+    return this.findById(id)!;
+  }
+
+  update(id: string, dto: UpdateSessionDTO): Session {
+    const existing = this.findById(id);
+    if (!existing) throw new Error(`Session ${id} not found`);
+
+    this.db
+      .prepare(
+        `UPDATE sessions SET name = ?, project_id = ?, last_used_at = ? WHERE id = ?`,
+      )
+      .run(
+        dto.name ?? existing.name,
+        dto.projectId !== undefined ? (dto.projectId ?? null) : existing.projectId,
+        dto.lastUsedAt ?? existing.lastUsedAt,
+        id,
       );
 
     return this.findById(id)!;

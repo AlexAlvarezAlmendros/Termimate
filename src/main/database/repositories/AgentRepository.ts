@@ -1,6 +1,6 @@
 import { v4 as uuid } from 'uuid';
 import { DatabaseManager } from '../DatabaseManager';
-import type { Agent, CreateAgentDTO, UpdateAgentDTO } from '../../../shared/types/agent.types';
+import type { Agent, CreateAgentDTO, UpdateAgentDTO, ProviderName } from '../../../shared/types/agent.types';
 
 export class AgentRepository {
   private get db() {
@@ -70,7 +70,7 @@ export class AgentRepository {
       id: r.id as string,
       name: r.name as string,
       systemPrompt: r.system_prompt as string | null,
-      provider: r.provider as 'anthropic' | 'openai',
+      provider: r.provider as ProviderName,
       model: r.model as string,
       toolsConfig: r.tools_config ? JSON.parse(r.tools_config as string) : null,
       createdAt: r.created_at as number,

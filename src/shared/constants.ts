@@ -14,6 +14,7 @@ export const IPC_CHANNELS = {
   PTY_RESIZE: 'pty:resize',
   PTY_DESTROY: 'pty:destroy',
   PTY_DATA: 'pty:data',
+  PTY_EXIT: 'pty:exit',
 
   AGENT_SEND_MESSAGE: 'agent:sendMessage',
   AGENT_STREAM_EVENT: 'agent:streamEvent',
@@ -28,9 +29,25 @@ export const IPC_CHANNELS = {
 
   SESSION_LIST: 'session:list',
   SESSION_CREATE: 'session:create',
+  SESSION_DELETE: 'session:delete',
 
   CONFIG_GET: 'config:get',
   CONFIG_SET: 'config:set',
   CONFIG_GET_API_KEY: 'config:getApiKey',
   CONFIG_SET_API_KEY: 'config:setApiKey',
+
+  AGENT_LIST: 'agent:list',
+  AGENT_CREATE: 'agent:create',
+  AGENT_UPDATE: 'agent:update',
+  AGENT_DELETE: 'agent:delete',
+
+  SESSION_UPDATE: 'session:update',
+  SESSION_RENAMED: 'session:renamed',
+
+  MESSAGE_LIST: 'message:list',
+  MESSAGE_DELETE_BY_SESSION: 'message:deleteBySession',
+
+  PROJECT_DOCUMENT_LIST: 'project:listDocuments',
+  PROJECT_DOCUMENT_ADD: 'project:addDocument',
+  PROJECT_DOCUMENT_REMOVE: 'project:removeDocument',
 } as const;

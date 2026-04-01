@@ -1,5 +1,6 @@
 import { BrowserWindow, shell, app } from 'electron';
 import { join } from 'path';
+import { AgentExecutor } from '../agent/AgentExecutor';
 
 export class WindowManager {
   private mainWindow: BrowserWindow | null = null;
@@ -28,6 +29,10 @@ export class WindowManager {
 
     this.mainWindow.on('ready-to-show', () => {
       this.mainWindow?.show();
+    });
+
+    this.mainWindow.on('close', () => {
+      AgentExecutor.getInstance().cancelAll();
     });
 
     // Open external links in system browser

@@ -1,9 +1,31 @@
 import { useEffect } from 'react';
 import { useAgentStore } from '../store/agentStore';
+import type { ChatMessage } from '../store/agentStore';
+import type { ProviderName } from '../../../shared/types/agent.types';
+import type { ToolCall } from '../store/agentStore';
+
+const EMPTY_MESSAGES: ChatMessage[] = [];
 
 export function useAgent(sessionId: string | null) {
-  const messages = useAgentStore((s) => (sessionId ? (s.messages[sessionId] ?? []) : []));
+  const messages = useAgentStore((s) => (sessionId ? (s.messages[sessionId] ?? EMPTY_MESSAGES) : EMPTY_MESSAGES));
   const isStreaming = useAgentStore((s) => (sessionId ? (s.streamingSessions[sessionId] ?? false) : false));
+
+  // Load persisted messages from DB when switching to a session with no in-memory messages
+  useEffect(() => {
+    if (!sessionId || !window.electronAPI) return;
+    const existing = useAgentStore.getState().messages[sessionId];
+    if (existing && existing.length > 0) return;
+
+    window.electronAPI.message.list(sessionId).then((dbMessages) => {
+      if (dbMessages.length === 0) return;
+      const store = useAgentStore.getState();
+      store.setMessages(sessionId, dbMessages.map((m) => ({
+        role: m.role as 'user' | 'assistant',
+        content: m.content,
+        toolCalls: m.toolCalls ? (JSON.parse(m.toolCalls) as ToolCall[]) : undefined,
+      })));
+    }).catch(() => { /* silent — history load failure is non-critical */ });
+  }, [sessionId]);
 
   useEffect(() => {
     if (!sessionId || !window.electronAPI) return;
@@ -31,13 +53,21 @@ export function useAgent(sessionId: string | null) {
       } else if (event.type === 'message_stop') {
         store.setStreaming(sessionId, false);
         if (event.usage) {
-          store.updateTokenUsage(sessionId, event.usage.input_tokens ?? 0, event.usage.output_tokens ?? 0);
+          store.updateTokenUsage(sessionId, event.usage.inputTokens ?? 0, event.usage.outputTokens ?? 0);
         }
       } else if (event.type === 'error') {
-        store.addMessage(sessionId, {
-          role: 'assistant',
-          content: `Error: ${event.message ?? 'Unknown error occurred'}`,
-        });
+        const msg = event.message ?? 'Unknown error occurred';
+        let friendlyMsg = `Error: ${msg}`;
+
+        if (msg.includes('API key not configured') || msg.includes('api_key')) {
+          friendlyMsg = 'No API key configured. Open **Settings** (gear icon) and add your Anthropic or OpenAI API key to start chatting.';
+        } else if (msg.includes('rate_limit') || msg.includes('429')) {
+          friendlyMsg = 'Rate limit reached. Please wait a moment before sending another message.';
+        } else if (msg.includes('ENOTFOUND') || msg.includes('network')) {
+          friendlyMsg = 'Network error. Check your internet connection and try again.';
+        }
+
+        store.addMessage(sessionId, { role: 'assistant', content: friendlyMsg });
         store.setStreaming(sessionId, false);
       }
     });
@@ -47,7 +77,7 @@ export function useAgent(sessionId: string | null) {
     };
   }, [sessionId]);
 
-  const sendMessage = async (content: string) => {
+  const sendMessage = async (content: string, provider?: ProviderName, model?: string, agentId?: string) => {
     if (!sessionId || !content.trim() || !window.electronAPI) return;
 
     useAgentStore.getState().addMessage(sessionId, { role: 'user', content });
@@ -56,6 +86,9 @@ export function useAgent(sessionId: string | null) {
       await window.electronAPI.agent.sendMessage({
         sessionId,
         content,
+        provider,
+        model,
+        agentId,
       });
     } catch (error) {
       useAgentStore.getState().addMessage(sessionId, {

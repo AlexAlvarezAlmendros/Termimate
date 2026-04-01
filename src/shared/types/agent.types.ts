@@ -1,8 +1,10 @@
+export type ProviderName = 'anthropic' | 'openai' | 'gemini';
+
 export interface Agent {
   id: string;
   name: string;
   systemPrompt: string | null;
-  provider: 'anthropic' | 'openai';
+  provider: ProviderName;
   model: string;
   toolsConfig: ToolsConfig | null;
   createdAt: number;
@@ -11,7 +13,7 @@ export interface Agent {
 export interface CreateAgentDTO {
   name: string;
   systemPrompt?: string;
-  provider: 'anthropic' | 'openai';
+  provider: ProviderName;
   model: string;
   toolsConfig?: ToolsConfig;
 }
@@ -19,7 +21,7 @@ export interface CreateAgentDTO {
 export interface UpdateAgentDTO {
   name?: string;
   systemPrompt?: string;
-  provider?: 'anthropic' | 'openai';
+  provider?: ProviderName;
   model?: string;
   toolsConfig?: ToolsConfig;
 }
@@ -32,7 +34,7 @@ export interface ToolsConfig {
 export interface ModelDefinition {
   id: string;
   name: string;
-  provider: 'anthropic' | 'openai';
+  provider: ProviderName;
   maxTokens: number;
 }
 
@@ -73,6 +75,8 @@ export interface Message {
 export interface SendMessageParams {
   sessionId: string;
   content: string;
+  provider?: ProviderName;
+  model?: string;
   agentId?: string;
   attachments?: string[];
 }

@@ -98,6 +98,23 @@ export class DatabaseManager {
       CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
       CREATE INDEX IF NOT EXISTS idx_project_docs_project ON project_documents(project_id);
     `);
+
+    // Seed default agent if it doesn't exist
+    const defaultAgent = db.prepare('SELECT id FROM agents WHERE id = ?').get('default');
+    if (!defaultAgent) {
+      db.prepare(
+        `INSERT INTO agents (id, name, system_prompt, provider, model, tools_config, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        'default',
+        'Termimate Default',
+        null,
+        'anthropic',
+        'claude-sonnet-4-6',
+        JSON.stringify({ enabledTools: ['file_list', 'file_read', 'bash_execute', 'terminal_read'] }),
+        Date.now(),
+      );
+    }
   }
 
   close(): void {

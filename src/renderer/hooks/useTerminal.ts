@@ -3,15 +3,18 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { SearchAddon } from '@xterm/addon-search';
+import { getTheme } from '../config/terminalThemes';
 import '@xterm/xterm/css/xterm.css';
 
 export function useTerminal(sessionId: string | null) {
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  const searchAddonRef = useRef<SearchAddon | null>(null);
+  const accentColorRef = useRef<string>('#7c6af5');
   const cleanupRef = useRef<(() => void) | null>(null);
 
   const attach = useCallback(
-    (container: HTMLElement) => {
+    async (container: HTMLElement) => {
       // Cleanup previous
       if (cleanupRef.current) {
         cleanupRef.current();
@@ -22,34 +25,25 @@ export function useTerminal(sessionId: string | null) {
 
       if (!sessionId || !window.electronAPI) return;
 
+      const config = await window.electronAPI.config.get();
+      const shell = config.terminal.defaultShell;
+
+      const themeId = config.appearance?.terminalTheme ?? 'termimate-dark';
+      const termTheme = getTheme(themeId);
+      accentColorRef.current = termTheme.accent;
+
       const terminal = new Terminal({
-        theme: {
-          background: '#0e0e0e',
-          foreground: '#e5e2e1',
-          cursor: '#98cbff',
-          cursorAccent: '#0e0e0e',
-          selectionBackground: 'rgba(152, 203, 255, 0.3)',
-          black: '#131313',
-          red: '#ffb4ab',
-          green: '#5dff3b',
-          yellow: '#ffba43',
-          blue: '#98cbff',
-          magenta: '#d19000',
-          cyan: '#00a3ff',
-          white: '#e5e2e1',
-          brightBlack: '#3f4852',
-          brightRed: '#ffdad6',
-          brightGreen: '#79ff59',
-          brightYellow: '#ffddaf',
-          brightBlue: '#cfe5ff',
-          brightMagenta: '#ffba43',
-          brightCyan: '#98cbff',
-          brightWhite: '#ffffff',
-        },
-        fontFamily: 'Fira Code, monospace',
-        fontSize: 14,
-        cursorBlink: true,
+        theme: termTheme.xterm,
+        fontFamily: config.appearance?.terminalFontFamily ?? 'Fira Code, monospace',
+        fontSize: config.appearance?.terminalFontSize ?? 14,
+        lineHeight: config.appearance?.lineHeight ?? 1.2,
+        letterSpacing: config.appearance?.letterSpacing ?? 0,
+        cursorBlink: config.appearance?.cursorBlink ?? true,
+        cursorStyle: (config.appearance?.cursorStyle as 'block' | 'underline' | 'bar') ?? 'block',
+        scrollback: config.terminal?.scrollback ?? 5000,
         allowProposedApi: true,
+        macOptionIsMeta: true,
+        rightClickSelectsWord: true,
       });
 
       const fitAddon = new FitAddon();
@@ -65,6 +59,7 @@ export function useTerminal(sessionId: string | null) {
 
       terminalRef.current = terminal;
       fitAddonRef.current = fitAddon;
+      searchAddonRef.current = searchAddon;
 
       // Connect to PTY via IPC
       const cols = terminal.cols;
@@ -72,7 +67,7 @@ export function useTerminal(sessionId: string | null) {
 
       window.electronAPI.pty.create({
         sessionId,
-        shell: navigator.platform.startsWith('Win') ? 'powershell.exe' : '/bin/bash',
+        shell,
         cwd: '~',
         cols,
         rows,
@@ -113,5 +108,24 @@ export function useTerminal(sessionId: string | null) {
     };
   }, []);
 
-  return { attach, terminal: terminalRef.current };
+  return {
+    attach,
+    terminal: terminalRef.current,
+    searchAddon: searchAddonRef.current,
+    accentColor: accentColorRef.current,
+  };
+}
+
+
+  const attach = useCallback(
+    async (container: HTMLElement) => {
+
+  useEffect(() => {
+    return () => {
+      if (cleanupRef.current) cleanupRef.current();
+      if (terminalRef.current) terminalRef.current.dispose();
+    };
+  }, []);
+
+  return { attach, terminal: terminalRef.current, searchAddon: searchAddonRef.current };
 }

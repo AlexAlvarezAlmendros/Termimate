@@ -5,6 +5,7 @@ import { registerProjectHandlers } from './ipc/handlers/projectHandlers';
 import { registerConfigHandlers } from './ipc/handlers/configHandlers';
 import { registerAgentHandlers } from './ipc/handlers/agentHandlers';
 import { registerSessionHandlers } from './ipc/handlers/sessionHandlers';
+import { registerMessageHandlers } from './ipc/handlers/messageHandlers';
 import { DatabaseManager } from './database/DatabaseManager';
 
 let windowManager: WindowManager;
@@ -19,6 +20,7 @@ async function bootstrap(): Promise<void> {
   registerConfigHandlers();
   registerAgentHandlers();
   registerSessionHandlers();
+  registerMessageHandlers();
 
   // Create the main window
   windowManager = new WindowManager();

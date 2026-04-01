@@ -1,23 +1,35 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { TerminalPane } from '../../terminal/TerminalPane';
 import { ChatPane } from '../../agent/ChatPane';
+import { AgentsPage } from '../../agents/AgentsPage';
+import type { AppView } from '../../../App';
 
-const DEFAULT_SPLIT = 65; // terminal gets 65%
-const MIN_TERMINAL = 25;
-const MIN_AGENT = 20;
+const DEFAULT_CHAT_WIDTH = 320;
+const MIN_TERMINAL_WIDTH = 300;
+const MIN_CHAT_WIDTH = 240;
 
-export function MainArea() {
-  const [splitPercent, setSplitPercent] = useState(DEFAULT_SPLIT);
+interface MainAreaProps {
+  view: AppView;
+}
 
-  const handleDragStart = useCallback(() => {
-    const handleMouseMove = (e: MouseEvent) => {
-      const container = document.getElementById('main-area');
+export function MainArea({ view }: MainAreaProps) {
+  const chatOpen = view === 'chat';
+  const [chatWidth, setChatWidth] = useState(DEFAULT_CHAT_WIDTH);
+  const containerRef = useRef<HTMLElement>(null);
+
+  const handleDragStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = chatWidth;
+
+    const handleMouseMove = (ev: MouseEvent) => {
+      const container = containerRef.current;
       if (!container) return;
-
-      const rect = container.getBoundingClientRect();
-      const percent = ((e.clientY - rect.top) / rect.height) * 100;
-      const clamped = Math.max(MIN_TERMINAL, Math.min(100 - MIN_AGENT, percent));
-      setSplitPercent(clamped);
+      const delta = startX - ev.clientX;
+      const containerWidth = container.getBoundingClientRect().width;
+      const maxChat = containerWidth - MIN_TERMINAL_WIDTH;
+      const newWidth = Math.max(MIN_CHAT_WIDTH, Math.min(maxChat, startWidth + delta));
+      setChatWidth(newWidth);
     };
 
     const handleMouseUp = () => {
@@ -29,38 +41,47 @@ export function MainArea() {
 
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
-    document.body.style.cursor = 'row-resize';
+    document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
-  }, []);
+  }, [chatWidth]);
 
   const handleDoubleClick = useCallback(() => {
-    setSplitPercent(DEFAULT_SPLIT);
+    setChatWidth(DEFAULT_CHAT_WIDTH);
   }, []);
 
+  if (view === 'agents') {
+    return (
+      <main className="ml-64 flex-1 flex flex-col p-4 h-full overflow-hidden">
+        <div className="flex-1 bg-surface-container-lowest rounded-xl border border-outline-variant/10 overflow-hidden">
+          <AgentsPage />
+        </div>
+      </main>
+    );
+  }
+
   return (
-    <main id="main-area" className="ml-64 flex-1 flex flex-col p-4 gap-0 h-full overflow-hidden">
-      {/* Terminal Panel */}
-      <section
-        className="flex flex-col bg-surface-container-lowest rounded-t-xl border border-outline-variant/10 overflow-hidden"
-        style={{ height: `${splitPercent}%` }}
-      >
+    <main ref={containerRef} id="main-area" className="ml-64 flex-1 flex flex-row p-4 h-full overflow-hidden">
+      {/* Terminal */}
+      <section className="flex flex-col flex-1 bg-surface-container-lowest rounded-xl border border-outline-variant/10 overflow-hidden min-w-0">
         <TerminalPane />
       </section>
 
-      {/* Resize Handle */}
-      <div
-        className="h-1 bg-outline-variant/20 hover:bg-primary/40 cursor-row-resize transition-colors flex-shrink-0"
-        onMouseDown={handleDragStart}
-        onDoubleClick={handleDoubleClick}
-      />
-
-      {/* Agent Chat Panel */}
-      <section
-        className="flex flex-col bg-surface-container-lowest rounded-b-xl border border-t-0 border-outline-variant/10 overflow-hidden"
-        style={{ height: `${100 - splitPercent}%` }}
-      >
-        <ChatPane />
-      </section>
+      {/* Resize handle + Chat sidebar */}
+      {chatOpen && (
+        <>
+          <div
+            className="w-1.5 mx-1 bg-outline-variant/20 hover:bg-primary/40 cursor-col-resize transition-colors shrink-0 rounded-full"
+            onMouseDown={handleDragStart}
+            onDoubleClick={handleDoubleClick}
+          />
+          <section
+            className="flex flex-col bg-surface-container-lowest rounded-xl border border-outline-variant/10 overflow-hidden shrink-0"
+            style={{ width: chatWidth }}
+          >
+            <ChatPane />
+          </section>
+        </>
+      )}
     </main>
   );
 }

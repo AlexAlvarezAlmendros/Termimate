@@ -27,6 +27,7 @@ interface AgentStore {
   addToolCall: (sessionId: string, toolName: string, input: unknown) => void;
   resolveToolCall: (sessionId: string, toolName: string, result: { output?: string; error?: string }) => void;
   updateTokenUsage: (sessionId: string, input: number, output: number) => void;
+  setMessages: (sessionId: string, messages: ChatMessage[]) => void;
 }
 
 export const useAgentStore = create<AgentStore>((set, get) => ({
@@ -104,4 +105,9 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
         },
       };
     }),
+
+  setMessages: (sessionId, messages) =>
+    set((state) => ({
+      messages: { ...state.messages, [sessionId]: messages },
+    })),
 }));

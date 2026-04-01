@@ -17,6 +17,14 @@ export function registerPtyHandlers(): void {
       }
     });
 
+    // Notify renderer when process exits
+    session.onExit((exitCode) => {
+      const windows = BrowserWindow.getAllWindows();
+      for (const win of windows) {
+        win.webContents.send(IPC_CHANNELS.PTY_EXIT, config.sessionId, exitCode);
+      }
+    });
+
     return { sessionId: config.sessionId };
   });
 

@@ -18,6 +18,12 @@ export interface CreateSessionDTO {
   envVars?: Record<string, string>;
 }
 
+export interface UpdateSessionDTO {
+  name?: string;
+  projectId?: string | null;
+  lastUsedAt?: number;
+}
+
 export interface PTYConfig {
   sessionId: string;
   shell: string;

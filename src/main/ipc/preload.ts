@@ -17,6 +17,12 @@ const electronAPI: ElectronAPI = {
       ipcRenderer.on(IPC_CHANNELS.PTY_DATA, handler);
       return () => ipcRenderer.removeListener(IPC_CHANNELS.PTY_DATA, handler);
     },
+    onExit: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, sessionId: string, exitCode: number) =>
+        callback(sessionId, exitCode);
+      ipcRenderer.on(IPC_CHANNELS.PTY_EXIT, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.PTY_EXIT, handler);
+    },
   },
   agent: {
     sendMessage: (params) => ipcRenderer.invoke(IPC_CHANNELS.AGENT_SEND_MESSAGE, params),
@@ -40,16 +46,36 @@ const electronAPI: ElectronAPI = {
     confirmResponse: (requestId, approved) =>
       ipcRenderer.invoke(IPC_CHANNELS.AGENT_CONFIRM_RESPONSE, requestId, approved),
     cancel: (streamId) => ipcRenderer.send(IPC_CHANNELS.AGENT_CANCEL, streamId),
+    list: () => ipcRenderer.invoke(IPC_CHANNELS.AGENT_LIST),
+    create: (dto) => ipcRenderer.invoke(IPC_CHANNELS.AGENT_CREATE, dto),
+    update: (id, dto) => ipcRenderer.invoke(IPC_CHANNELS.AGENT_UPDATE, id, dto),
+    delete: (id) => ipcRenderer.invoke(IPC_CHANNELS.AGENT_DELETE, id),
   },
   project: {
     list: () => ipcRenderer.invoke(IPC_CHANNELS.PROJECT_LIST),
     create: (dto) => ipcRenderer.invoke(IPC_CHANNELS.PROJECT_CREATE, dto),
     update: (id, dto) => ipcRenderer.invoke(IPC_CHANNELS.PROJECT_UPDATE, id, dto),
     delete: (id) => ipcRenderer.invoke(IPC_CHANNELS.PROJECT_DELETE, id),
+    listDocuments: (projectId) => ipcRenderer.invoke(IPC_CHANNELS.PROJECT_DOCUMENT_LIST, projectId),
+    addDocument: (projectId, filePath, fileName, mimeType) =>
+      ipcRenderer.invoke(IPC_CHANNELS.PROJECT_DOCUMENT_ADD, projectId, filePath, fileName, mimeType),
+    removeDocument: (docId) => ipcRenderer.invoke(IPC_CHANNELS.PROJECT_DOCUMENT_REMOVE, docId),
   },
   session: {
     list: (projectId) => ipcRenderer.invoke(IPC_CHANNELS.SESSION_LIST, projectId),
     create: (dto) => ipcRenderer.invoke(IPC_CHANNELS.SESSION_CREATE, dto),
+    delete: (id) => ipcRenderer.invoke(IPC_CHANNELS.SESSION_DELETE, id),
+    update: (id, dto) => ipcRenderer.invoke(IPC_CHANNELS.SESSION_UPDATE, id, dto),
+    onRenamed: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, sessionId: string, name: string) =>
+        callback(sessionId, name);
+      ipcRenderer.on(IPC_CHANNELS.SESSION_RENAMED, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.SESSION_RENAMED, handler);
+    },
+  },
+  message: {
+    list: (sessionId) => ipcRenderer.invoke(IPC_CHANNELS.MESSAGE_LIST, sessionId),
+    deleteBySession: (sessionId) => ipcRenderer.invoke(IPC_CHANNELS.MESSAGE_DELETE_BY_SESSION, sessionId),
   },
   config: {
     get: () => ipcRenderer.invoke(IPC_CHANNELS.CONFIG_GET),
