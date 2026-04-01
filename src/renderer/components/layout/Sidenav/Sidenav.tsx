@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useSessionStore } from '../../../store/sessionStore';
 import { useProject } from '../../../hooks/useProject';
 import { ProjectModal } from '../../projects/ProjectModal';
@@ -13,7 +13,7 @@ interface SidenavProps {
 }
 
 export function Sidenav({ onOpenSettings, view, onNavigate }: SidenavProps) {
-  const { sessions, activeSessionId, addSession, setActiveSession, renameSession } = useSessionStore();
+  const { sessions, activeSessionId, openTabIds, addSession, openSession, renameSession, deleteSession, toggleStar, assignProject } = useSessionStore();
   const { projects, deleteProject } = useProject();
 
   const [projectModalOpen, setProjectModalOpen] = useState(false);
@@ -22,11 +22,24 @@ export function Sidenav({ onOpenSettings, view, onNavigate }: SidenavProps) {
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const renameInputRef = useRef<HTMLInputElement>(null);
+  const [menuState, setMenuState] = useState<{ id: string; x: number; y: number } | null>(null);
+  const [projectPickerOpen, setProjectPickerOpen] = useState(false);
+
+  const menuSession = menuState ? (sessions.find((s) => s.id === menuState.id) ?? null) : null;
+
+  // Close menu on outside click
+  useEffect(() => {
+    if (!menuState) return;
+    const handler = () => { setMenuState(null); setProjectPickerOpen(false); };
+    window.addEventListener('mousedown', handler);
+    return () => window.removeEventListener('mousedown', handler);
+  }, [menuState]);
 
   const handleNewSession = async () => {
     if (!window.electronAPI) return;
     const session = await window.electronAPI.session.create({});
     addSession({ id: session.id, name: session.name, projectId: session.projectId });
+    onNavigate('terminal');
   };
 
   const handleNewProject = () => {
@@ -70,6 +83,22 @@ export function Sidenav({ onOpenSettings, view, onNavigate }: SidenavProps) {
     setRenamingSessionId(null);
   };
 
+  const handleDeleteSession = async (sessionId: string) => {
+    const session = sessions.find((s) => s.id === sessionId);
+    if (!confirm(`Delete session "${session?.name ?? sessionId}" permanently? This cannot be undone.`)) return;
+    setMenuState(null);
+    deleteSession(sessionId);
+  };
+
+  const handleAssignProject = async (sessionId: string, projectId: string | null) => {
+    assignProject(sessionId, projectId);
+    if (window.electronAPI) {
+      await window.electronAPI.session.update(sessionId, { projectId });
+    }
+    setMenuState(null);
+    setProjectPickerOpen(false);
+  };
+
   // Group sessions by projectId
   const sessionsByProject = new Map<string | null, typeof sessions>();
   sessionsByProject.set(null, []);
@@ -82,41 +111,62 @@ export function Sidenav({ onOpenSettings, view, onNavigate }: SidenavProps) {
     sessionsByProject.get(key)!.push(session);
   }
 
-  const renderSessionItem = (session: typeof sessions[0]) => (
-    <div
-      key={session.id}
-      className={`group flex items-center gap-2 pl-6 pr-2 py-1.5 rounded-lg cursor-pointer transition-colors ${
-        session.id === activeSessionId
-          ? 'bg-primary/10 text-primary'
-          : 'text-outline/70 hover:bg-surface-container-high/50 hover:text-on-surface'
-      }`}
-      onClick={() => setActiveSession(session.id)}
-    >
-      <span className="text-[10px] text-outline/40">›</span>
-      {renamingSessionId === session.id ? (
-        <input
-          ref={renameInputRef}
-          value={renameValue}
-          onChange={(e) => setRenameValue(e.target.value)}
-          onBlur={() => commitRename(session.id)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') commitRename(session.id);
-            if (e.key === 'Escape') setRenamingSessionId(null);
+  const renderSessionItem = (session: typeof sessions[number]) => {
+    const isInTab = openTabIds.includes(session.id);
+    const isActive = session.id === activeSessionId && isInTab;
+    return (
+      <div
+        key={session.id}
+        className={`group flex items-center gap-1.5 pl-6 pr-2 py-1.5 rounded-lg cursor-pointer transition-colors ${
+          isActive
+            ? 'bg-primary/10 text-primary'
+            : 'text-outline/70 hover:bg-surface-container-high/50 hover:text-on-surface'
+        }`}
+        onClick={() => { openSession(session.id); onNavigate('terminal'); }}
+      >
+        {session.starred && (
+          <span className="text-amber-400 text-[10px] shrink-0">★</span>
+        )}
+        <span className="text-[10px] text-outline/40 shrink-0">›</span>
+        {renamingSessionId === session.id ? (
+          <input
+            ref={renameInputRef}
+            value={renameValue}
+            onChange={(e) => setRenameValue(e.target.value)}
+            onBlur={() => commitRename(session.id)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') commitRename(session.id);
+              if (e.key === 'Escape') setRenamingSessionId(null);
+            }}
+            className="flex-1 bg-surface-container-high text-xs px-1 py-0.5 rounded focus:outline-none focus:ring-1 focus:ring-primary/50 min-w-0"
+            onClick={(e) => e.stopPropagation()}
+          />
+        ) : (
+          <span className="text-xs truncate flex-1 min-w-0" title={session.name}>
+            {session.name}
+          </span>
+        )}
+        {isInTab && (
+          <span className="w-1.5 h-1.5 rounded-full bg-green-400/60 shrink-0" title="Open in tab" />
+        )}
+        <button
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            const rect = e.currentTarget.getBoundingClientRect();
+            setMenuState((ms) =>
+              ms?.id === session.id ? null : { id: session.id, x: rect.right + 4, y: rect.top }
+            );
+            setProjectPickerOpen(false);
           }}
-          className="flex-1 bg-surface-container-high text-xs px-1 py-0.5 rounded focus:outline-none focus:ring-1 focus:ring-primary/50 min-w-0"
-          onClick={(e) => e.stopPropagation()}
-        />
-      ) : (
-        <span
-          className="text-xs truncate flex-1 min-w-0"
-          onDoubleClick={(e) => { e.stopPropagation(); startRename(session.id, session.name); }}
-          title="Double-click to rename"
+          className="shrink-0 opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-white/10 transition-all text-on-surface/60 hover:text-on-surface"
+          title="Options"
         >
-          {session.name}
-        </span>
-      )}
-    </div>
-  );
+          <DotsIcon />
+        </button>
+      </div>
+    );
+  };
 
   return (
     <>
@@ -241,6 +291,74 @@ export function Sidenav({ onOpenSettings, view, onNavigate }: SidenavProps) {
         onClose={() => setProjectModalOpen(false)}
         project={editingProject}
       />
+
+      {/* Floating session options menu */}
+      {menuState && menuSession && (
+        <div
+          className="fixed z-200 min-w-44 bg-surface-container-high rounded-lg shadow-xl border border-outline-variant/20 py-1"
+          style={{ left: menuState.x, top: menuState.y }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          {projectPickerOpen ? (
+            <>
+              <div className="px-3 py-1.5 flex items-center gap-2 text-xs text-outline/70 border-b border-outline-variant/10">
+                <button
+                  onClick={() => setProjectPickerOpen(false)}
+                  className="hover:text-on-surface transition-colors"
+                >
+                  ←
+                </button>
+                <span>Assign to project</span>
+              </div>
+              <button
+                onClick={() => handleAssignProject(menuSession.id, null)}
+                className={`w-full text-left px-3 py-1.5 text-sm flex items-center gap-2 hover:bg-primary/10 transition-colors ${menuSession.projectId === null ? 'text-primary' : 'text-on-surface'}`}
+              >
+                No Project
+              </button>
+              {projects.map((p) => (
+                <button
+                  key={p.id}
+                  onClick={() => handleAssignProject(menuSession.id, p.id)}
+                  className={`w-full text-left px-3 py-1.5 text-sm flex items-center gap-2 hover:bg-primary/10 transition-colors ${menuSession.projectId === p.id ? 'text-primary' : 'text-on-surface'}`}
+                >
+                  <span>{p.icon ?? '📁'}</span>
+                  <span className="truncate">{p.name}</span>
+                </button>
+              ))}
+            </>
+          ) : (
+            <>
+              <button
+                onClick={() => { startRename(menuSession.id, menuSession.name); setMenuState(null); }}
+                className="w-full text-left px-3 py-1.5 text-sm text-on-surface hover:bg-primary/10 transition-colors"
+              >
+                Rename
+              </button>
+              <button
+                onClick={() => { toggleStar(menuSession.id); setMenuState(null); }}
+                className="w-full text-left px-3 py-1.5 text-sm text-on-surface hover:bg-primary/10 transition-colors flex items-center gap-2"
+              >
+                <span className="text-amber-400">★</span>
+                {menuSession.starred ? 'Unstar' : 'Destacar'}
+              </button>
+              <button
+                onClick={() => setProjectPickerOpen(true)}
+                className="w-full text-left px-3 py-1.5 text-sm text-on-surface hover:bg-primary/10 transition-colors"
+              >
+                Assign to project
+              </button>
+              <div className="border-t border-outline-variant/10 my-1" />
+              <button
+                onClick={() => handleDeleteSession(menuSession.id)}
+                className="w-full text-left px-3 py-1.5 text-sm text-error hover:bg-error/10 transition-colors"
+              >
+                Delete permanently
+              </button>
+            </>
+          )}
+        </div>
+      )}
     </>
   );
 }
@@ -300,6 +418,16 @@ function SettingsSmallIcon() {
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
       <circle cx="12" cy="12" r="3" />
       <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+    </svg>
+  );
+}
+
+function DotsIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+      <circle cx="5" cy="12" r="2" />
+      <circle cx="12" cy="12" r="2" />
+      <circle cx="19" cy="12" r="2" />
     </svg>
   );
 }

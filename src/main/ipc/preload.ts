@@ -11,6 +11,7 @@ const electronAPI: ElectronAPI = {
     resize: (sessionId, cols, rows) =>
       ipcRenderer.invoke(IPC_CHANNELS.PTY_RESIZE, sessionId, cols, rows),
     destroy: (sessionId) => ipcRenderer.invoke(IPC_CHANNELS.PTY_DESTROY, sessionId),
+    getScrollback: (sessionId) => ipcRenderer.invoke(IPC_CHANNELS.PTY_GET_SCROLLBACK, sessionId),
     onData: (callback) => {
       const handler = (_event: Electron.IpcRendererEvent, sessionId: string, data: string) =>
         callback(sessionId, data);

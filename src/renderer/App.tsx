@@ -31,8 +31,8 @@ export default function App() {
       } else if (e.key === 'W' || e.key === 'w') {
         e.preventDefault();
         const store = useSessionStore.getState();
-        if (store.activeSessionId && store.sessions.length > 1) {
-          store.closeSession(store.activeSessionId);
+        if (store.activeSessionId) {
+          store.closeTab(store.activeSessionId);
         }
       } else if (e.key === 'Tab') {
         e.preventDefault();

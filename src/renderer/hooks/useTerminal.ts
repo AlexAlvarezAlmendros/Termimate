@@ -1,4 +1,4 @@
-import { useRef, useCallback, useEffect } from 'react';
+import { useRef, useCallback, useEffect, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
@@ -6,31 +6,52 @@ import { SearchAddon } from '@xterm/addon-search';
 import { getTheme } from '../config/terminalThemes';
 import '@xterm/xterm/css/xterm.css';
 
-export function useTerminal(sessionId: string | null) {
-  const terminalRef = useRef<Terminal | null>(null);
-  const fitAddonRef = useRef<FitAddon | null>(null);
-  const searchAddonRef = useRef<SearchAddon | null>(null);
-  const accentColorRef = useRef<string>('#7c6af5');
-  const cleanupRef = useRef<(() => void) | null>(null);
+interface TerminalInstance {
+  terminal: Terminal;
+  fitAddon: FitAddon;
+  searchAddon: SearchAddon;
+  container: HTMLElement;
+  cleanup: () => void;
+}
 
-  const attach = useCallback(
-    async (container: HTMLElement) => {
-      // Cleanup previous
-      if (cleanupRef.current) {
-        cleanupRef.current();
-      }
-      if (terminalRef.current) {
-        terminalRef.current.dispose();
+/**
+ * Manages one xterm Terminal instance per session.
+ * Instances are created once and kept alive across tab switches so PTY
+ * processes and their scrollback history are never lost when switching tabs.
+ * On app restart, saved scrollback is replayed from the database before
+ * connecting the fresh PTY process.
+ */
+export function useTerminalManager() {
+  const instancesRef = useRef<Map<string, TerminalInstance>>(new Map());
+  const [accentColor, setAccentColor] = useState<string>('#7c6af5');
+  const [bgColor, setBgColor] = useState<string>('#0d0d0f');
+
+  const focusSession = useCallback((sessionId: string) => {
+    const inst = instancesRef.current.get(sessionId);
+    if (!inst) return;
+    inst.fitAddon.fit();
+    inst.terminal.focus();
+    window.electronAPI?.pty.resize(sessionId, inst.terminal.cols, inst.terminal.rows);
+  }, []);
+
+  const initSession = useCallback(
+    async (sessionId: string, container: HTMLElement) => {
+      // Already initialized — just refocus
+      if (instancesRef.current.has(sessionId)) {
+        focusSession(sessionId);
+        return;
       }
 
-      if (!sessionId || !window.electronAPI) return;
+      if (!window.electronAPI) return;
 
       const config = await window.electronAPI.config.get();
       const shell = config.terminal.defaultShell;
 
       const themeId = config.appearance?.terminalTheme ?? 'termimate-dark';
       const termTheme = getTheme(themeId);
-      accentColorRef.current = termTheme.accent;
+      setAccentColor(termTheme.accent);
+      setBgColor(termTheme.xterm.background as string);
+      container.style.background = termTheme.xterm.background as string;
 
       const terminal = new Terminal({
         theme: termTheme.xterm,
@@ -57,20 +78,51 @@ export function useTerminal(sessionId: string | null) {
       terminal.open(container);
       fitAddon.fit();
 
-      terminalRef.current = terminal;
-      fitAddonRef.current = fitAddon;
-      searchAddonRef.current = searchAddon;
+      // Replay persisted scrollback from previous session (app restart)
+      const savedScrollback = await window.electronAPI.pty.getScrollback(sessionId);
+      if (savedScrollback) {
+        // Use xterm's write callback so we know the buffer is fully settled
+        // before trying to read from it.  setTimeout(0) is NOT enough because
+        // xterm defers rendering to requestAnimationFrame.
+        await new Promise<void>((r) => terminal.write(savedScrollback, r));
 
-      // Connect to PTY via IPC
-      const cols = terminal.cols;
-      const rows = terminal.rows;
+        // Scan the ENTIRE buffer (scrollback + viewport) from the bottom to
+        // find the last row with actual content.  The raw PTY byte stream can
+        // leave the cursor at an arbitrary position well above the last line,
+        // creating a large blank gap before the new shell prompt.
+        const buf = terminal.buffer.active;
+        const totalLines = buf.baseY + terminal.rows;
+        let lastContentViewportRow = -1;
 
-      window.electronAPI.pty.create({
+        for (let i = totalLines - 1; i >= 0; i--) {
+          const line = buf.getLine(i);
+          if (line && line.translateToString(true).trim().length > 0) {
+            // Determine if this line falls within the current viewport
+            const vRow = i - buf.baseY;
+            lastContentViewportRow = vRow >= 0 && vRow < terminal.rows ? vRow : -1;
+            break;
+          }
+        }
+
+        if (lastContentViewportRow >= 0 && lastContentViewportRow < terminal.rows - 1) {
+          // Move cursor to the line immediately after the last content line.
+          terminal.write(`\x1b[${lastContentViewportRow + 2};1H`);
+        } else if (lastContentViewportRow === -1) {
+          // All content is in scrollback; viewport is empty.  Move to row 1.
+          terminal.write('\x1b[1;1H');
+        }
+        // If last content is the very last viewport row, \r\n below will scroll.
+
+        terminal.write('\r\n');
+      }
+
+      // Spawn the PTY process and wait for it to be ready before attaching listeners
+      await window.electronAPI.pty.create({
         sessionId,
         shell,
         cwd: '~',
-        cols,
-        rows,
+        cols: terminal.cols,
+        rows: terminal.rows,
       });
 
       // Terminal input → PTY
@@ -78,54 +130,104 @@ export function useTerminal(sessionId: string | null) {
         window.electronAPI.pty.write(sessionId, data);
       });
 
-      // PTY output → Terminal
+      // PTY output → terminal (each session registers its own listener)
       const removeDataListener = window.electronAPI.pty.onData((sid, data) => {
         if (sid === sessionId) {
           terminal.write(data);
         }
       });
 
-      // Handle resize
+      // Auto-resize when the container changes size
       const resizeObserver = new ResizeObserver(() => {
         fitAddon.fit();
-        window.electronAPI.pty.resize(sessionId, terminal.cols, terminal.rows);
+        window.electronAPI?.pty.resize(sessionId, terminal.cols, terminal.rows);
       });
       resizeObserver.observe(container);
 
-      cleanupRef.current = () => {
-        inputDisposable.dispose();
-        removeDataListener();
-        resizeObserver.disconnect();
-      };
+      instancesRef.current.set(sessionId, {
+        terminal,
+        fitAddon,
+        searchAddon,
+        container,
+        cleanup: () => {
+          inputDisposable.dispose();
+          removeDataListener();
+          resizeObserver.disconnect();
+          terminal.dispose();
+        },
+      });
+
+      terminal.focus();
     },
-    [sessionId],
+    [focusSession],
   );
 
+  const destroySession = useCallback((sessionId: string) => {
+    const inst = instancesRef.current.get(sessionId);
+    if (inst) {
+      inst.cleanup();
+      instancesRef.current.delete(sessionId);
+    }
+  }, []);
+
+  const getSearchAddon = useCallback((sessionId: string | null): SearchAddon | null => {
+    if (!sessionId) return null;
+    return instancesRef.current.get(sessionId)?.searchAddon ?? null;
+  }, []);
+
+  // Re-apply appearance settings for all open terminals when the user saves Settings
+  useEffect(() => {
+    const handleConfigUpdate = async () => {
+      if (!window.electronAPI) return;
+      const config = await window.electronAPI.config.get();
+      const themeId = config.appearance?.terminalTheme ?? 'termimate-dark';
+      const termTheme = getTheme(themeId);
+      setAccentColor(termTheme.accent);
+      setBgColor(termTheme.xterm.background as string);
+
+      for (const [, inst] of instancesRef.current) {
+        inst.container.style.background = termTheme.xterm.background as string;
+        inst.terminal.options.theme = termTheme.xterm;
+        inst.terminal.options.fontFamily =
+          config.appearance?.terminalFontFamily ?? 'Fira Code, monospace';
+        inst.terminal.options.fontSize = config.appearance?.terminalFontSize ?? 14;
+        inst.terminal.options.lineHeight = config.appearance?.lineHeight ?? 1.2;
+        inst.terminal.options.letterSpacing = config.appearance?.letterSpacing ?? 0;
+        inst.terminal.options.cursorBlink = config.appearance?.cursorBlink ?? true;
+        inst.terminal.options.cursorStyle =
+          (config.appearance?.cursorStyle as 'block' | 'underline' | 'bar') ?? 'block';
+        inst.fitAddon.fit();
+      }
+    };
+    window.addEventListener('termimate:configUpdated', handleConfigUpdate);
+    return () => window.removeEventListener('termimate:configUpdated', handleConfigUpdate);
+  }, []);
+
+  // Dispose everything on unmount
   useEffect(() => {
     return () => {
-      if (cleanupRef.current) cleanupRef.current();
-      if (terminalRef.current) terminalRef.current.dispose();
+      for (const [, inst] of instancesRef.current) {
+        inst.cleanup();
+      }
+      instancesRef.current.clear();
     };
   }, []);
 
-  return {
-    attach,
-    terminal: terminalRef.current,
-    searchAddon: searchAddonRef.current,
-    accentColor: accentColorRef.current,
-  };
-}
-
-
-  const attach = useCallback(
-    async (container: HTMLElement) => {
-
-  useEffect(() => {
-    return () => {
-      if (cleanupRef.current) cleanupRef.current();
-      if (terminalRef.current) terminalRef.current.dispose();
-    };
+  const copyContent = useCallback((sessionId: string | null): boolean => {
+    if (!sessionId) return false;
+    const inst = instancesRef.current.get(sessionId);
+    if (!inst) return false;
+    const buf = inst.terminal.buffer.active;
+    const lines: string[] = [];
+    for (let i = 0; i < buf.length; i++) {
+      lines.push(buf.getLine(i)?.translateToString(false) ?? '');
+    }
+    // Strip trailing empty lines
+    let end = lines.length;
+    while (end > 0 && lines[end - 1].trim() === '') end--;
+    navigator.clipboard.writeText(lines.slice(0, end).join('\n'));
+    return true;
   }, []);
 
-  return { attach, terminal: terminalRef.current, searchAddon: searchAddonRef.current };
+  return { initSession, focusSession, destroySession, getSearchAddon, copyContent, accentColor, bgColor };
 }

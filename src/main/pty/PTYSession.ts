@@ -13,7 +13,13 @@ export class PTYSession {
   constructor(config: PTYConfig) {
     const cwd = !config.cwd || config.cwd === '~' ? homedir() : config.cwd;
 
-    this.process = pty.spawn(config.shell, [], {
+    const shellName = config.shell.split(/[\\/]/).pop()?.toLowerCase() ?? '';
+    const shellArgs =
+      shellName === 'powershell.exe' || shellName === 'powershell' || shellName === 'pwsh.exe' || shellName === 'pwsh'
+        ? ['-NoLogo']
+        : [];
+
+    this.process = pty.spawn(config.shell, shellArgs, {
       name: 'xterm-256color',
       cols: config.cols,
       rows: config.rows,

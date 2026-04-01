@@ -7,6 +7,7 @@ export interface IPCInvokeChannels {
   'pty:create': (config: PTYConfig) => { sessionId: string };
   'pty:resize': (sessionId: string, cols: number, rows: number) => void;
   'pty:destroy': (sessionId: string) => void;
+  'pty:getScrollback': (sessionId: string) => string | null;
 
   'agent:sendMessage': (params: SendMessageParams) => { streamId: string };
   'agent:confirmResponse': (requestId: string, approved: boolean) => void;
@@ -81,6 +82,7 @@ export interface ElectronAPI {
     write: (sessionId: string, data: string) => void;
     resize: (sessionId: string, cols: number, rows: number) => Promise<void>;
     destroy: (sessionId: string) => Promise<void>;
+    getScrollback: (sessionId: string) => Promise<string | null>;
     onData: (callback: (sessionId: string, data: string) => void) => () => void;
     onExit: (callback: (sessionId: string, exitCode: number) => void) => () => void;
   };

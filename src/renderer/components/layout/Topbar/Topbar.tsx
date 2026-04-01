@@ -9,7 +9,8 @@ interface TopbarProps {
 }
 
 export function Topbar({ onOpenSettings, view, onToggleChat }: TopbarProps) {
-  const { sessions, activeSessionId, setActiveSession, addSession, closeSession, renameSession, ptyStatus } = useSessionStore();
+  const { sessions, activeSessionId, setActiveSession, addSession, closeTab, renameSession, ptyStatus, openTabIds } = useSessionStore();
+  const tabSessions = sessions.filter((s) => openTabIds.includes(s.id));
 
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; sessionId: string } | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -36,8 +37,7 @@ export function Topbar({ onOpenSettings, view, onToggleChat }: TopbarProps) {
 
   const handleCloseSession = (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
-    if (sessions.length <= 1) return; // keep at least one session
-    closeSession(id);
+    closeTab(id);
   };
 
   const handleContextMenu = (e: React.MouseEvent, sessionId: string) => {
@@ -63,8 +63,7 @@ export function Topbar({ onOpenSettings, view, onToggleChat }: TopbarProps) {
 
   const contextCloseSession = (sessionId: string) => {
     setContextMenu(null);
-    if (sessions.length <= 1) return;
-    closeSession(sessionId);
+    closeTab(sessionId);
   };
 
   return (
@@ -77,7 +76,7 @@ export function Topbar({ onOpenSettings, view, onToggleChat }: TopbarProps) {
 
       {/* Session Tabs */}
       <nav className="flex items-center gap-1 bg-surface-container-lowest rounded-lg p-1 min-w-0 max-w-120">
-        {sessions.map((session) => (
+        {tabSessions.map((session) => (
           <div
             key={session.id}
             className={`flex items-center gap-1 px-3 py-1.5 rounded cursor-pointer transition-colors min-w-0 max-w-40 shrink ${
@@ -115,7 +114,7 @@ export function Topbar({ onOpenSettings, view, onToggleChat }: TopbarProps) {
                 {session.name}
               </span>
             )}
-            {sessions.length > 1 && (
+            {tabSessions.length > 1 && (
               <button
                 onClick={(e) => handleCloseSession(e, session.id)}
                 className="shrink-0 w-4 h-4 flex items-center justify-center rounded hover:bg-outline/20 transition-colors text-outline/50 hover:text-on-surface"
@@ -164,7 +163,7 @@ export function Topbar({ onOpenSettings, view, onToggleChat }: TopbarProps) {
     {/* Context menu */}
     {contextMenu && (
       <div
-        className="fixed z-[100] min-w-36 bg-surface-container-high rounded-lg shadow-xl border border-outline-variant/20 py-1"
+        className="fixed z-100 min-w-36 bg-surface-container-high rounded-lg shadow-xl border border-outline-variant/20 py-1"
         style={{ left: contextMenu.x, top: contextMenu.y }}
         onClick={(e) => e.stopPropagation()}
       >
@@ -175,11 +174,10 @@ export function Topbar({ onOpenSettings, view, onToggleChat }: TopbarProps) {
           Rename
         </button>
         <button
-          className="w-full text-left px-3 py-1.5 text-sm text-error hover:bg-error/10 transition-colors disabled:opacity-40"
-          disabled={sessions.length <= 1}
+          className="w-full text-left px-3 py-1.5 text-sm text-on-surface hover:bg-error/10 transition-colors"
           onClick={() => contextCloseSession(contextMenu.sessionId)}
         >
-          Close
+          Close tab
         </button>
       </div>
     )}

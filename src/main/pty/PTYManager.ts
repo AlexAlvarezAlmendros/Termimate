@@ -1,12 +1,13 @@
 import type { PTYConfig } from '../../shared/types/session.types';
 import { PTYSession } from './PTYSession';
 import { SessionOutputBuffer } from './SessionOutputBuffer';
-import { DEFAULT_OUTPUT_BUFFER_LINES } from '../../shared/constants';
+import { DEFAULT_OUTPUT_BUFFER_LINES, MAX_SCROLLBACK_BYTES } from '../../shared/constants';
 
 export class PTYManager {
   private static instance: PTYManager;
   private sessions = new Map<string, PTYSession>();
   private outputBuffers = new Map<string, SessionOutputBuffer>();
+  private rawScrollbackBuffers = new Map<string, string>();
 
   static getInstance(): PTYManager {
     if (!PTYManager.instance) {
@@ -15,12 +16,26 @@ export class PTYManager {
     return PTYManager.instance;
   }
 
-  createSession(config: PTYConfig): PTYSession {
+  createSession(config: PTYConfig, initialScrollback?: string): PTYSession {
     const session = new PTYSession(config);
     const buffer = new SessionOutputBuffer(DEFAULT_OUTPUT_BUFFER_LINES);
 
+    // Seed buffer with the previously saved scrollback so accumulated data is
+    // always the FULL history (old + new), not just data from this launch.
+    this.rawScrollbackBuffers.set(config.sessionId, initialScrollback ?? '');
+
     session.onData((data) => {
       buffer.push(data);
+
+      // Accumulate raw output for scrollback persistence (capped at MAX_SCROLLBACK_BYTES)
+      const existing = this.rawScrollbackBuffers.get(config.sessionId) ?? '';
+      const combined = existing + data;
+      this.rawScrollbackBuffers.set(
+        config.sessionId,
+        combined.length > MAX_SCROLLBACK_BYTES
+          ? combined.slice(combined.length - MAX_SCROLLBACK_BYTES)
+          : combined,
+      );
     });
 
     this.sessions.set(config.sessionId, session);
@@ -49,6 +64,7 @@ export class PTYManager {
       session.destroy();
       this.sessions.delete(sessionId);
       this.outputBuffers.delete(sessionId);
+      this.rawScrollbackBuffers.delete(sessionId);
     }
   }
 
@@ -58,5 +74,13 @@ export class PTYManager {
 
   getSession(sessionId: string): PTYSession | null {
     return this.sessions.get(sessionId) ?? null;
+  }
+
+  getRawScrollback(sessionId: string): string {
+    return this.rawScrollbackBuffers.get(sessionId) ?? '';
+  }
+
+  getAllSessionIds(): string[] {
+    return Array.from(this.sessions.keys());
   }
 }

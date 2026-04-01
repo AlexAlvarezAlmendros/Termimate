@@ -99,6 +99,12 @@ export class DatabaseManager {
       CREATE INDEX IF NOT EXISTS idx_project_docs_project ON project_documents(project_id);
     `);
 
+    // Incremental migration: add scrollback_data column if it does not exist yet
+    const sessionCols = db.prepare('PRAGMA table_info(sessions)').all() as Array<{ name: string }>;
+    if (!sessionCols.some((c) => c.name === 'scrollback_data')) {
+      db.exec('ALTER TABLE sessions ADD COLUMN scrollback_data TEXT');
+    }
+
     // Seed default agent if it doesn't exist
     const defaultAgent = db.prepare('SELECT id FROM agents WHERE id = ?').get('default');
     if (!defaultAgent) {

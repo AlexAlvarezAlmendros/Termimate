@@ -7,6 +7,7 @@ export const DEFAULT_TERMINAL_FONT_FAMILY = 'Fira Code, monospace';
 export const DEFAULT_TERMINAL_FONT_SIZE = 14;
 export const DEFAULT_SCROLLBACK = 5000;
 export const DEFAULT_OUTPUT_BUFFER_LINES = 200;
+export const MAX_SCROLLBACK_BYTES = 512 * 1024; // 512 KB per session
 
 export const IPC_CHANNELS = {
   PTY_CREATE: 'pty:create',
@@ -15,6 +16,7 @@ export const IPC_CHANNELS = {
   PTY_DESTROY: 'pty:destroy',
   PTY_DATA: 'pty:data',
   PTY_EXIT: 'pty:exit',
+  PTY_GET_SCROLLBACK: 'pty:getScrollback',
 
   AGENT_SEND_MESSAGE: 'agent:sendMessage',
   AGENT_STREAM_EVENT: 'agent:streamEvent',

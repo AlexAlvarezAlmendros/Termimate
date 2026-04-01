@@ -70,6 +70,17 @@ export class SessionRepository {
     this.db.prepare('DELETE FROM sessions WHERE id = ?').run(id);
   }
 
+  saveScrollback(id: string, data: string): void {
+    this.db.prepare('UPDATE sessions SET scrollback_data = ? WHERE id = ?').run(data, id);
+  }
+
+  getScrollback(id: string): string | null {
+    const row = this.db.prepare('SELECT scrollback_data FROM sessions WHERE id = ?').get(id) as
+      | { scrollback_data: string | null }
+      | undefined;
+    return row?.scrollback_data ?? null;
+  }
+
   private mapRow(row: unknown): Session {
     const r = row as Record<string, unknown>;
     return {
