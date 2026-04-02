@@ -1,9 +1,11 @@
 import { v4 as uuid } from 'uuid';
 import { BrowserWindow } from 'electron';
 import { zodToJsonSchema } from 'zod-to-json-schema';
-import type { ILLMProvider, ToolDefinition } from './providers/ILLMProvider';
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
+import type { ILLMProvider, ToolDefinition, RichMessage } from './providers/ILLMProvider';
 import type { ITool } from './tools/ITool';
-import type { SendMessageParams, StreamEvent, ToolContext, QuestionRequest, ApprovalLevel } from '../../shared/types/agent.types';
+import type { SendMessageParams, StreamEvent, ToolContext, QuestionRequest, ApprovalLevel, Message } from '../../shared/types/agent.types';
 import { AnthropicProvider } from './providers/AnthropicProvider';
 import { OpenAIProvider } from './providers/OpenAIProvider';
 import { GeminiProvider } from './providers/GeminiProvider';
@@ -28,6 +30,7 @@ import { getConfig } from '../config/ConfigService';
 import { AgentRepository } from '../database/repositories/AgentRepository';
 import { ProjectDocumentRepository } from '../database/repositories/ProjectDocumentRepository';
 import { PermissionGuard } from '../security/PermissionGuard';
+import { HookExecutor } from './hooks/HookExecutor';
 
 const MAX_TOOL_ROUNDS = 10;
 
@@ -116,12 +119,24 @@ export class AgentExecutor {
     const agent = params.agentId ? this.agentRepo.findById(params.agentId) : null;
     const guard = new PermissionGuard(agent?.toolsConfig ?? null);
 
-    // Build system prompt
+    // Build system prompt (inject session memory from previous sessions if available)
     const shell = getConfig().terminal.defaultShell;
     const basePrompt = agent?.systemPrompt ?? null;
     const documents = project ? this.docRepo.findByProject(project.id) : [];
     const approvalLevel = params.approvalLevel ?? 'default';
-    const systemPrompt = this.buildSystemPrompt(project, shell, basePrompt, documents, approvalLevel === 'plan');
+
+    // Load persisted session memory for this project
+    let sessionMemory: string | null = null;
+    if (project?.rootPath) {
+      try {
+        sessionMemory = await fs.readFile(path.join(project.rootPath, '.termimate', 'memory.md'), 'utf-8');
+      } catch { /* memory file doesn't exist yet — that's fine */ }
+    }
+
+    const systemPrompt = this.buildSystemPrompt(project, shell, basePrompt, documents, approvalLevel === 'plan', sessionMemory);
+
+    // Load project hooks (.termimate/hooks.json) — empty executor if no config found
+    const hookExecutor = project?.rootPath ? await HookExecutor.load(project.rootPath, shell) : null;
 
     // Build tool context (spawnAgent uses late-bound refs to provider/model)
     let resolvedProvider: ILLMProvider | undefined;
@@ -156,7 +171,7 @@ export class AgentExecutor {
     resolvedModel = model;
 
     try {
-      await this.runConversationLoop(streamId, params.sessionId, provider, model, systemPrompt, toolContext, guard, !!params.enableThinking, params.approvalLevel ?? 'default');
+      await this.runConversationLoop(streamId, params.sessionId, provider, model, systemPrompt, toolContext, guard, hookExecutor, !!params.enableThinking, params.approvalLevel ?? 'default');
     } catch (error) {
       console.error('Agent error:', error);
       this.emitStreamEvent(streamId, {
@@ -178,6 +193,7 @@ export class AgentExecutor {
     systemPrompt: string,
     toolContext: ToolContext,
     guard: PermissionGuard,
+    hookExecutor: HookExecutor | null,
     enableThinking = false,
     approvalLevel: 'default' | 'confirm_all' | 'auto' | 'plan' = 'default',
   ): Promise<void> {
@@ -186,12 +202,9 @@ export class AgentExecutor {
 
       // Get conversation history, trimmed to fit within the model's context window
       const history = this.messageRepo.findBySession(sessionId);
-      const rawMessages = history.map((m) => ({
-        role: m.role as 'user' | 'assistant',
-        content: m.content,
-      }));
+      const richMessages = this.buildRichHistory(history);
       const maxTokens = provider.supportedModels.find((m) => m.id === model)?.maxTokens ?? 8192;
-      const messages = this.trimToContextWindow(rawMessages, systemPrompt, maxTokens);
+      const messages = this.trimToContextWindow(richMessages, systemPrompt, maxTokens);
 
       let fullResponse = '';
       const toolCalls: Array<{ name: string; input: unknown }> = [];
@@ -242,6 +255,12 @@ export class AgentExecutor {
           });
         }
         this.emitStreamEvent(streamId, { type: 'message_stop', usage });
+
+        // Async session memory extraction: run silently after the conversation ends.
+        // Only triggered when there was ≥1 tool round (substantive interaction).
+        if (round > 0 && toolContext.projectRoot) {
+          this.extractAndSaveMemory(provider, model, sessionId, toolContext.projectRoot).catch(() => {});
+        }
         return;
       }
 
@@ -299,8 +318,22 @@ export class AgentExecutor {
           toolResults[i] = `Tool ${tc.name}: Disabled`;
           return;
         }
+        // PreToolUse hooks (blocking — exit code 2 blocks execution)
+        if (hookExecutor && !hookExecutor.isEmpty) {
+          const preResult = await hookExecutor.runPreHooks(tc.name, tc.input);
+          if (preResult.decision === 'block') {
+            const result = { success: false, error: preResult.message ?? `Blocked by PreToolUse hook` };
+            this.emitStreamEvent(streamId, { type: 'tool_use_end', toolName: tc.name, result });
+            toolResults[i] = `Tool ${tc.name}: Blocked by hook`;
+            return;
+          }
+        }
         try {
           const result = await tool.execute(tc.input, toolContext);
+          // PostToolUse hooks (fire-and-forget)
+          if (hookExecutor && !hookExecutor.isEmpty) {
+            hookExecutor.runPostHooks(tc.name, tc.input, result.success, result.output ?? result.error ?? '');
+          }
           this.emitStreamEvent(streamId, { type: 'tool_use_end', toolName: tc.name, result });
           toolResults[i] = `Tool ${tc.name}: ${result.success ? result.output ?? 'Success' : `Error: ${result.error}`}`;
         } catch (error) {
@@ -325,6 +358,17 @@ export class AgentExecutor {
           this.emitStreamEvent(streamId, { type: 'tool_use_end', toolName: tc.name, result });
           toolResults[i] = `Tool ${tc.name}: Disabled`;
           continue;
+        }
+
+        // PreToolUse hooks (blocking) — run before confirmation dialog
+        if (hookExecutor && !hookExecutor.isEmpty) {
+          const preResult = await hookExecutor.runPreHooks(tc.name, tc.input);
+          if (preResult.decision === 'block') {
+            const result = { success: false, error: preResult.message ?? `Blocked by PreToolUse hook` };
+            this.emitStreamEvent(streamId, { type: 'tool_use_end', toolName: tc.name, result });
+            toolResults[i] = `Tool ${tc.name}: Blocked by hook`;
+            continue;
+          }
         }
 
         const input = tc.input as Record<string, unknown>;
@@ -363,6 +407,10 @@ export class AgentExecutor {
 
         try {
           const result = await tool.execute(tc.input, toolContext);
+          // PostToolUse hooks (fire-and-forget)
+          if (hookExecutor && !hookExecutor.isEmpty) {
+            hookExecutor.runPostHooks(tc.name, tc.input, result.success, result.output ?? result.error ?? '');
+          }
           this.emitStreamEvent(streamId, { type: 'tool_use_end', toolName: tc.name, result });
           toolResults[i] = `Tool ${tc.name}: ${result.success ? result.output ?? 'Success' : `Error: ${result.error}`}`;
         } catch (error) {
@@ -372,20 +420,30 @@ export class AgentExecutor {
         }
       }
 
-      // Store a minimal assistant record for this tool round (maintains alternating roles in history)
-      // Using tool call summary keeps history clean for all providers (especially Gemini)
-      const toolCallSummary = toolCalls.map((tc) => `Called: ${tc.name}(${JSON.stringify(tc.input)})`).join('\n');
+      // Store a minimal assistant record for this tool round with structured tool call data.
+      // The tool_calls column holds JSON used to reconstruct native tool_use/tool_result
+      // blocks in buildRichHistory() on subsequent rounds.
+      const toolCallsWithIds = toolCalls.map((tc) => ({ id: uuid(), name: tc.name, input: tc.input }));
       this.messageRepo.create({
         sessionId,
         role: 'assistant',
-        content: toolCallSummary,
+        content: fullResponse, // preserve any narration text
+        toolCalls: JSON.stringify(toolCallsWithIds),
       });
 
-      // Store tool results as a user message so the LLM sees them on the next round
+      // Store tool results as a user message — content is human-readable (shown in UI),
+      // tool_calls holds the structured JSON keyed by toolCallId for provider serialization.
+      const toolResultsStructured = toolCallsWithIds.map((tc, i) => ({
+        toolCallId: tc.id,
+        toolName: tc.name,
+        content: toolResults[i] ?? '',
+        isError: (toolResults[i] ?? '').includes('Error -'),
+      }));
       this.messageRepo.create({
         sessionId,
         role: 'user',
         content: `[Tool Results]\n${toolResults.join('\n')}`,
+        toolCalls: JSON.stringify(toolResultsStructured),
       });
     }
 
@@ -404,31 +462,150 @@ export class AgentExecutor {
     return Math.ceil(text.length / 3);
   }
 
+  /** Estimates tokens for a single RichMessage (including any toolCalls or content). */
+  private estimateRichTokens(m: RichMessage): number {
+    let tokens = 0;
+    if ('content' in m && m.content) tokens += this.estimateTokens(m.content);
+    if (m.role === 'assistant' && m.toolCalls) {
+      for (const tc of m.toolCalls) tokens += this.estimateTokens(JSON.stringify(tc.input));
+    }
+    if (m.role === 'tool_result') tokens += this.estimateTokens(m.content);
+    return Math.max(tokens, 4); // minimum 4 tokens per message
+  }
+
   /**
    * Trims message history to stay within ~80% of the model context window.
-   * Removes the oldest user/assistant pairs first, always keeping the last user message.
+   * Removes the oldest messages first, always keeping the first user message.
+   * Preserves structural integrity: never removes a tool_result without its assistant.
    */
   private trimToContextWindow(
-    messages: Array<{ role: 'user' | 'assistant'; content: string }>,
+    messages: RichMessage[],
     systemPrompt: string,
     maxTokens: number,
-  ): Array<{ role: 'user' | 'assistant'; content: string }> {
+  ): RichMessage[] {
     const BUDGET = Math.floor(maxTokens * 0.8);
     const systemTokens = this.estimateTokens(systemPrompt);
     // Reserve ~500 tokens for tool definitions overhead
     const available = BUDGET - systemTokens - 500;
 
     // Count total tokens
-    let total = messages.reduce((sum, m) => sum + this.estimateTokens(m.content), 0);
+    let total = messages.reduce((sum, m) => sum + this.estimateRichTokens(m), 0);
     if (total <= available) return messages;
 
-    // Drop pairs from the front (keep the last user message guaranteed)
+    // Drop from the front, preserving structural integrity:
+    // never start with orphaned tool_results (they must follow an assistant w/ toolCalls).
     const trimmed = [...messages];
     while (total > available && trimmed.length > 1) {
       const dropped = trimmed.shift()!;
-      total -= this.estimateTokens(dropped.content);
+      total -= this.estimateRichTokens(dropped);
+      // If we just removed an assistant message that had tool calls, also drop its tool_result(s)
+      if (dropped.role === 'assistant' && 'toolCalls' in dropped && dropped.toolCalls?.length) {
+        while (trimmed.length > 0 && trimmed[0].role === 'tool_result') {
+          total -= this.estimateRichTokens(trimmed.shift()!);
+        }
+      }
+      // Ensure we don't start with orphaned tool_results
+      while (trimmed.length > 0 && trimmed[0].role === 'tool_result') {
+        total -= this.estimateRichTokens(trimmed.shift()!);
+      }
     }
     return trimmed;
+  }
+
+  /**
+   * Converts DB Message[] to RichMessage[] for provider consumption.
+   *
+   * Assistant messages with a `toolCalls` JSON column are converted to
+   * `{ role: 'assistant', toolCalls: [...] }` blocks.
+   *
+   * Corresponding user messages that start with "[Tool Results]" and also have
+   * a `toolCalls` JSON column are expanded into individual `{ role: 'tool_result' }` entries.
+   *
+   * Legacy messages (no toolCalls column) gracefully fall back to plain text.
+   */
+  private buildRichHistory(messages: Message[]): RichMessage[] {
+    const rich: RichMessage[] = [];
+    for (const m of messages) {
+      if (m.role === 'assistant' && m.toolCalls) {
+        try {
+          const calls = JSON.parse(m.toolCalls) as Array<{ id: string; name: string; input: unknown }>;
+          rich.push({ role: 'assistant', content: m.content, toolCalls: calls });
+        } catch {
+          rich.push({ role: 'assistant', content: m.content });
+        }
+      } else if (m.role === 'user' && m.toolCalls && m.content.startsWith('[Tool Results]')) {
+        try {
+          const results = JSON.parse(m.toolCalls) as Array<{
+            toolCallId: string;
+            toolName: string;
+            content: string;
+            isError?: boolean;
+          }>;
+          for (const r of results) {
+            rich.push({ role: 'tool_result', toolCallId: r.toolCallId, toolName: r.toolName, content: r.content, isError: r.isError });
+          }
+        } catch {
+          // Fallback: treat as a plain user message
+          rich.push({ role: 'user', content: m.content });
+        }
+      } else {
+        rich.push({ role: m.role as 'user' | 'assistant', content: m.content });
+      }
+    }
+    return rich;
+  }
+
+  /**
+   * Extracts key facts from the current session and saves them to
+   * {projectRoot}/.termimate/memory.md for injection into future sessions.
+   *
+   * This runs async/fire-and-forget so it never blocks the user.
+   */
+  private async extractAndSaveMemory(
+    provider: ILLMProvider,
+    model: string,
+    sessionId: string,
+    projectRoot: string,
+  ): Promise<void> {
+    const history = this.messageRepo.findBySession(sessionId);
+    // Only extract if there was real work (at least a few exchanges)
+    if (history.length < 4) return;
+
+    // Build a compact transcript (cap at last 30 messages to keep the call cheap)
+    const recent = history.slice(-30);
+    const transcript = recent
+      .filter((m) => !m.content.startsWith('[Tool Results]') && !m.content.startsWith('[Plan mode'))
+      .map((m) => `${m.role === 'assistant' ? 'Assistant' : 'User'}: ${m.content.slice(0, 500)}`)
+      .join('\n');
+
+    const memoryPrompt =
+      `Extract 3-8 concise bullet-point facts from this conversation that would be useful context in a future session. ` +
+      `Focus on: file paths discovered, technologies/versions identified, decisions made, problems solved, build commands, config values. ` +
+      `Be terse. Each bullet ≤ 20 words. Output ONLY the bullet list, nothing else.`;
+
+    let memoryContent = '';
+    try {
+      const stream = provider.streamMessage({
+        model,
+        systemPrompt: memoryPrompt,
+        messages: [{ role: 'user', content: transcript }],
+      });
+      for await (const event of stream) {
+        if (event.type === 'text_delta') memoryContent += event.content;
+      }
+    } catch {
+      return; // Extraction failures are silent
+    }
+
+    if (!memoryContent.trim()) return;
+
+    const memDir = path.join(projectRoot, '.termimate');
+    await fs.mkdir(memDir, { recursive: true });
+    await fs.writeFile(
+      path.join(memDir, 'memory.md'),
+      `<!-- Auto-generated by Termimate. Do not edit manually. -->\n${memoryContent.trim()}\n`,
+      'utf-8',
+    );
   }
 
   /**
@@ -531,7 +708,7 @@ export class AgentExecutor {
       ? `You are a sub-agent. ${systemContext}\n\nComplete the task precisely and return a concise result.`
       : `You are a sub-agent. Complete the following task precisely and return a concise result.`;
 
-    const messages: Array<{ role: 'user' | 'assistant'; content: string }> = [
+    const messages: RichMessage[] = [
       { role: 'user', content: task },
     ];
 
@@ -576,8 +753,19 @@ export class AgentExecutor {
         }
       }
 
-      messages.push({ role: 'assistant', content: toolCalls.map((tc) => `Called: ${tc.name}(${JSON.stringify(tc.input)})`).join('\n') });
-      messages.push({ role: 'user', content: `[Tool Results]\n${toolResults.join('\n')}` });
+      // Store assistant+results as RichMessage for native provider format
+      const subToolCallsWithIds = toolCalls.map((tc) => ({ id: uuid(), name: tc.name, input: tc.input }));
+      messages.push({ role: 'assistant', content: fullResponse, toolCalls: subToolCallsWithIds });
+      for (let j = 0; j < subToolCallsWithIds.length; j++) {
+        const tc = subToolCallsWithIds[j];
+        messages.push({
+          role: 'tool_result',
+          toolCallId: tc.id,
+          toolName: tc.name,
+          content: toolResults[j] ?? '',
+          isError: (toolResults[j] ?? '').includes('Error -'),
+        });
+      }
     }
 
     return finalResponse || '(Sub-agent completed without producing a response)';
@@ -627,6 +815,7 @@ export class AgentExecutor {
     agentBasePrompt: string | null,
     documents: Array<{ fileName: string; filePath: string }>,
     planMode = false,
+    sessionMemory: string | null = null,
   ): string {
     const sections: string[] = [];
     const shellName = this.resolveShellName(shell);
@@ -703,6 +892,15 @@ export class AgentExecutor {
         `## Reference Documents\n` +
         `The following files have been attached as context for this project. ` +
         `Read them with the file_read tool when they are relevant to the task:\n${docList}`,
+      );
+    }
+
+    // ── Session memory ────────────────────────────────────────────────────────
+    if (sessionMemory) {
+      sections.push(
+        `## Session Memory\n` +
+        `Key facts extracted from previous sessions with this project. Use as background context:\n\n` +
+        sessionMemory.trim(),
       );
     }
 

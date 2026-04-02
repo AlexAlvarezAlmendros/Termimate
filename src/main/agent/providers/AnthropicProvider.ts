@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
-import type { ILLMProvider, StreamMessageParams } from './ILLMProvider';
+import type { ILLMProvider, StreamMessageParams, RichMessage } from './ILLMProvider';
 import type { StreamEvent, ModelDefinition } from '../../../shared/types/agent.types';
 import { getApiKey } from '../../security/KeychainService';
 
@@ -26,6 +26,53 @@ export class AnthropicProvider implements ILLMProvider {
     return this.client;
   }
 
+  /**
+   * Converts RichMessage[] → Anthropic message format.
+   * Consecutive tool_result messages are batched into a single user turn.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private buildMessages(messages: RichMessage[]): any[] {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result: any[] = [];
+    let i = 0;
+    while (i < messages.length) {
+      const m = messages[i];
+      if (m.role === 'assistant') {
+        if (m.toolCalls && m.toolCalls.length > 0) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const content: any[] = [];
+          if (m.content) content.push({ type: 'text', text: m.content });
+          for (const tc of m.toolCalls) {
+            content.push({ type: 'tool_use', id: tc.id, name: tc.name, input: tc.input });
+          }
+          result.push({ role: 'assistant', content });
+        } else {
+          result.push({ role: 'assistant', content: m.content });
+        }
+        i++;
+      } else if (m.role === 'tool_result') {
+        // Batch consecutive tool_results into one user message with tool_result content blocks
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const toolResultContent: any[] = [];
+        while (i < messages.length && messages[i].role === 'tool_result') {
+          const tr = messages[i] as { role: 'tool_result'; toolCallId: string; toolName: string; content: string; isError?: boolean };
+          toolResultContent.push({
+            type: 'tool_result',
+            tool_use_id: tr.toolCallId,
+            content: tr.content,
+            is_error: tr.isError ?? false,
+          });
+          i++;
+        }
+        result.push({ role: 'user', content: toolResultContent });
+      } else {
+        result.push({ role: 'user', content: m.content });
+        i++;
+      }
+    }
+    return result;
+  }
+
   async *streamMessage(params: StreamMessageParams): AsyncIterable<StreamEvent> {
     const client = await this.getClient();
 
@@ -38,7 +85,7 @@ export class AnthropicProvider implements ILLMProvider {
       model: params.model,
       max_tokens: maxTokens,
       system: params.systemPrompt,
-      messages: params.messages,
+      messages: this.buildMessages(params.messages),
       ...(hasTools
         ? {
             tools: params.tools!.map((t) => ({

@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import type { ILLMProvider, StreamMessageParams } from './ILLMProvider';
+import type { ILLMProvider, StreamMessageParams, RichMessage } from './ILLMProvider';
 import type { StreamEvent, ModelDefinition } from '../../../shared/types/agent.types';
 import { getApiKey } from '../../security/KeychainService';
 import { ThinkingStreamParser, THINKING_SYSTEM_INSTRUCTION } from './ThinkingStreamParser';
@@ -32,6 +32,39 @@ export class OpenAIProvider implements ILLMProvider {
     return this.client;
   }
 
+  /**
+   * Converts RichMessage[] → OpenAI message format.
+   * tool_result messages use role: 'tool' with tool_call_id.
+   * Assistant messages with toolCalls get a tool_calls property.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private buildMessages(systemPrompt: string, messages: RichMessage[]): any[] {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result: any[] = [{ role: 'system', content: systemPrompt }];
+    for (const m of messages) {
+      if (m.role === 'assistant') {
+        if (m.toolCalls && m.toolCalls.length > 0) {
+          result.push({
+            role: 'assistant',
+            content: m.content || null,
+            tool_calls: m.toolCalls.map((tc) => ({
+              id: tc.id,
+              type: 'function',
+              function: { name: tc.name, arguments: JSON.stringify(tc.input) },
+            })),
+          });
+        } else {
+          result.push({ role: 'assistant', content: m.content });
+        }
+      } else if (m.role === 'tool_result') {
+        result.push({ role: 'tool', tool_call_id: m.toolCallId, content: m.content });
+      } else {
+        result.push({ role: 'user', content: m.content });
+      }
+    }
+    return result;
+  }
+
   async *streamMessage(params: StreamMessageParams): AsyncIterable<StreamEvent> {
     const client = await this.getClient();
 
@@ -45,13 +78,7 @@ export class OpenAIProvider implements ILLMProvider {
       model: params.model,
       stream: true,
       stream_options: { include_usage: true },
-      messages: [
-        { role: 'system', content: systemPrompt },
-        ...params.messages.map((m) => ({
-          role: m.role as 'user' | 'assistant',
-          content: m.content,
-        })),
-      ],
+      messages: this.buildMessages(systemPrompt, params.messages),
       ...(supportsTools
         ? {
             tools: params.tools!.map((t) => ({

@@ -25,6 +25,8 @@ interface AgentStore {
   setStreaming: (sessionId: string, streaming: boolean) => void;
   isSessionStreaming: (sessionId: string) => boolean;
   clearMessages: (sessionId: string) => void;
+  /** Remove the last assistant message if it is an incomplete streaming artifact. */
+  removeLastStreamingMessage: (sessionId: string) => void;
 
   addToolCall: (sessionId: string, toolName: string, input: unknown) => void;
   resolveToolCall: (sessionId: string, toolName: string, result: { output?: string; error?: string }) => void;
@@ -78,6 +80,16 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
     set((state) => ({
       messages: { ...state.messages, [sessionId]: [] },
     })),
+
+  removeLastStreamingMessage: (sessionId) =>
+    set((state) => {
+      const msgs = state.messages[sessionId] ?? [];
+      if (msgs.length === 0) return state;
+      const last = msgs[msgs.length - 1];
+      // Only remove the last assistant message (partial streaming artifact)
+      if (last.role !== 'assistant') return state;
+      return { messages: { ...state.messages, [sessionId]: msgs.slice(0, -1) } };
+    }),
 
   addToolCall: (sessionId, toolName, input) =>
     set((state) => {

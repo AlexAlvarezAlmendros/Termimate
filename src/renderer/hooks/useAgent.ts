@@ -77,6 +77,8 @@ export function useAgent(sessionId: string | null) {
           friendlyMsg = 'Network error. Check your internet connection and try again.';
         }
 
+        // Remove any partial streaming message before showing the error
+        store.removeLastStreamingMessage(sessionId);
         store.addMessage(sessionId, { role: 'assistant', content: friendlyMsg });
         store.setStreaming(sessionId, false);
       }

@@ -1,5 +1,5 @@
-import { GoogleGenerativeAI, type Content, type FunctionDeclaration } from '@google/generative-ai';
-import type { ILLMProvider, StreamMessageParams } from './ILLMProvider';
+import { GoogleGenerativeAI, type Content, type Part, type FunctionDeclaration } from '@google/generative-ai';
+import type { ILLMProvider, StreamMessageParams, RichMessage } from './ILLMProvider';
 import type { StreamEvent, ModelDefinition } from '../../../shared/types/agent.types';
 import { getApiKey } from '../../security/KeychainService';
 import { ThinkingStreamParser, THINKING_SYSTEM_INSTRUCTION } from './ThinkingStreamParser';
@@ -55,6 +55,47 @@ export class GeminiProvider implements ILLMProvider {
     return result;
   }
 
+  /**
+   * Converts RichMessage[] → Gemini Content[] format.
+   * Consecutive tool_result messages are batched into a single user turn with functionResponse parts.
+   */
+  private buildContents(messages: RichMessage[]): Content[] {
+    const contents: Content[] = [];
+    let i = 0;
+    while (i < messages.length) {
+      const m = messages[i];
+      if (m.role === 'assistant') {
+        const parts: Part[] = [];
+        if (m.content) parts.push({ text: m.content });
+        if (m.toolCalls && m.toolCalls.length > 0) {
+          for (const tc of m.toolCalls) {
+            parts.push({ functionCall: { name: tc.name, args: tc.input as Record<string, unknown> } });
+          }
+        }
+        if (parts.length > 0) contents.push({ role: 'model', parts });
+        i++;
+      } else if (m.role === 'tool_result') {
+        // Batch consecutive tool_results into one user turn
+        const parts: Part[] = [];
+        while (i < messages.length && messages[i].role === 'tool_result') {
+          const tr = messages[i] as { role: 'tool_result'; toolCallId: string; toolName: string; content: string };
+          parts.push({
+            functionResponse: {
+              name: tr.toolName,
+              response: { name: tr.toolName, content: tr.content },
+            },
+          });
+          i++;
+        }
+        contents.push({ role: 'user', parts });
+      } else {
+        contents.push({ role: 'user', parts: [{ text: m.content }] });
+        i++;
+      }
+    }
+    return contents;
+  }
+
   async *streamMessage(params: StreamMessageParams): AsyncIterable<StreamEvent> {
     const client = await this.getClient();
 
@@ -83,11 +124,8 @@ export class GeminiProvider implements ILLMProvider {
         : {}),
     });
 
-    // Convert messages to Gemini format (role 'assistant' → 'model')
-    const contents: Content[] = params.messages.map((m) => ({
-      role: m.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: m.content }],
-    }));
+    // Convert messages to Gemini Content[] (handles tool_use/tool_result natively)
+    const contents = this.buildContents(params.messages);
 
     const result = await model.generateContentStream({ contents });
 
