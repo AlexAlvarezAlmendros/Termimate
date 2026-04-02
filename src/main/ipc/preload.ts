@@ -44,8 +44,18 @@ const electronAPI: ElectronAPI = {
       ipcRenderer.on(IPC_CHANNELS.AGENT_CONFIRM_REQUEST, handler);
       return () => ipcRenderer.removeListener(IPC_CHANNELS.AGENT_CONFIRM_REQUEST, handler);
     },
+    onQuestionRequest: (callback) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        request: Parameters<typeof callback>[0],
+      ) => callback(request);
+      ipcRenderer.on(IPC_CHANNELS.AGENT_QUESTION_REQUEST, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.AGENT_QUESTION_REQUEST, handler);
+    },
     confirmResponse: (requestId, approved) =>
       ipcRenderer.invoke(IPC_CHANNELS.AGENT_CONFIRM_RESPONSE, requestId, approved),
+    questionResponse: (requestId, answer) =>
+      ipcRenderer.invoke(IPC_CHANNELS.AGENT_QUESTION_RESPONSE, requestId, answer),
     cancel: (streamId) => ipcRenderer.send(IPC_CHANNELS.AGENT_CANCEL, streamId),
     list: () => ipcRenderer.invoke(IPC_CHANNELS.AGENT_LIST),
     create: (dto) => ipcRenderer.invoke(IPC_CHANNELS.AGENT_CREATE, dto),

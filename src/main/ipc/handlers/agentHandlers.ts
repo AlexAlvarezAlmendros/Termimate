@@ -21,6 +21,10 @@ export function registerAgentHandlers(): void {
     executor.resolveConfirmation(requestId, approved);
   });
 
+  ipcMain.handle(IPC_CHANNELS.AGENT_QUESTION_RESPONSE, (_event, requestId: string, answer: string) => {
+    executor.resolveQuestion(requestId, answer);
+  });
+
   ipcMain.handle(IPC_CHANNELS.AGENT_LIST, () => agentRepo.findAll());
   ipcMain.handle(IPC_CHANNELS.AGENT_CREATE, (_event, dto: CreateAgentDTO) => agentRepo.create(dto));
   ipcMain.handle(IPC_CHANNELS.AGENT_UPDATE, (_event, id: string, dto: UpdateAgentDTO) => agentRepo.update(id, dto));

@@ -5,15 +5,14 @@ import { useSessionStore } from '../../store/sessionStore';
 export function TerminalPane() {
   const containerRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const searchInputRef = useRef<HTMLInputElement>(null);
-  const { activeSessionId, sessions, openTabIds } = useSessionStore();
-  const openSessions = sessions.filter((s) => openTabIds.includes(s.id));
+  const { activeSessionId, sessions } = useSessionStore();
   const { initSession, destroySession, getSearchAddon, copyContent, accentColor, bgColor } =
     useTerminalManager();
   const [showSearch, setShowSearch] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [copied, setCopied] = useState(false);
 
-  const activeSession = openSessions.find((s) => s.id === activeSessionId);
+  const activeSession = sessions.find((s) => s.id === activeSessionId);
   const searchAddon = getSearchAddon(activeSessionId);
 
   // When the active session changes, initialise it (first time) or simply refocus
@@ -27,13 +26,13 @@ export function TerminalPane() {
   // Clean up the xterm instance when a session is removed from the store
   const prevSessionsRef = useRef<string[]>([]);
   useEffect(() => {
-    const current = openSessions.map((s) => s.id);
+    const current = sessions.map((s) => s.id);
     const removed = prevSessionsRef.current.filter((id) => !current.includes(id));
     for (const id of removed) {
       destroySession(id);
     }
     prevSessionsRef.current = current;
-  }, [openSessions, destroySession]);
+  }, [sessions, destroySession]);
 
   // Keyboard shortcut: Ctrl+Shift+F
   useEffect(() => {
@@ -175,7 +174,7 @@ export function TerminalPane() {
 
       {/* Terminal bodies — one per session, only active one is visible */}
       <div className="flex-1 relative overflow-hidden" style={{ background: bgColor }}>
-        {openSessions.map((session) => (
+        {sessions.map((session) => (
           <div
             key={session.id}
             ref={(el) => {

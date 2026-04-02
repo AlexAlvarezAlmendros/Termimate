@@ -1,8 +1,8 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { MessageBubble } from './MessageBubble';
 import { ChatInput } from './ChatInput';
-import { ToolCallCard } from './ToolCallCard';
-import { ContextIndicator } from './ContextIndicator';
+import type { ApprovalLevel } from './ChatInput';
+import { ActivityTimeline } from './ActivityTimeline';
 import { useAgent } from '../../hooks/useAgent';
 import { useAgentCrud } from '../../hooks/useAgentCrud';
 import { useSessionStore } from '../../store/sessionStore';
@@ -21,6 +21,8 @@ export function ChatPane() {
   const [inputValue, setInputValue] = useState('');
   const [selectedModel, setSelectedModel] = useState(0);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
+  const [approvalLevel, setApprovalLevel] = useState<ApprovalLevel>('default');
+  const [enableThinking, setEnableThinking] = useState(false);
   const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -52,7 +54,7 @@ export function ChatPane() {
 
     const { provider, model } = MODELS[selectedModel];
     try {
-      await sendMessage(content, provider, model, selectedAgentId ?? undefined);
+      await sendMessage(content, provider, model, selectedAgentId ?? undefined, enableThinking, approvalLevel);
     } catch (error) {
       console.error('Failed to send message:', error);
     }
@@ -89,35 +91,6 @@ export function ChatPane() {
             )}
           </div>
           <div className="flex items-center gap-2">
-            {/* Agent selector */}
-            <select
-              value={selectedAgentId ?? ''}
-              onChange={(e) => setSelectedAgentId(e.target.value || null)}
-              disabled={isStreaming}
-              className="text-[10px] bg-transparent text-outline border border-outline-variant/20 rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-primary/50 cursor-pointer max-w-24"
-            >
-              <option value="">No Agent</option>
-              {agents.map((a) => (
-                <option key={a.id} value={a.id}>{a.name}</option>
-              ))}
-            </select>
-
-            {/* Model selector */}
-            <select
-              value={selectedModel}
-              onChange={(e) => setSelectedModel(Number(e.target.value))}
-              disabled={isStreaming}
-              className="text-[10px] bg-transparent text-outline border border-outline-variant/20 rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-primary/50 cursor-pointer"
-            >
-              {MODELS.map((m, i) => (
-                <option key={i} value={i}>{m.label}</option>
-              ))}
-            </select>
-
-            <span className="text-[10px] text-outline">
-              {isStreaming ? 'Thinking...' : 'Ready'}
-            </span>
-
             {messages.length > 0 && (
               <button
                 onClick={handleClearContext}
@@ -130,14 +103,6 @@ export function ChatPane() {
             )}
           </div>
         </div>
-        {totalTokens > 0 && (
-          <div className="mt-2">
-            <ContextIndicator
-              tokensUsed={totalTokens}
-              maxTokens={MODELS[selectedModel].maxTokens}
-            />
-          </div>
-        )}
       </div>
 
       {/* Messages */}
@@ -159,20 +124,29 @@ export function ChatPane() {
             </p>
           </div>
         )}
-        {messages.map((msg, i) => (
-          <div key={i}>
-            <MessageBubble role={msg.role} content={msg.content} />
-            {msg.toolCalls?.map((tc, j) => (
-              <ToolCallCard
-                key={`${i}-tool-${j}`}
-                toolName={tc.toolName}
-                input={tc.input}
-                result={tc.result}
-                isLoading={tc.isLoading}
-              />
-            ))}
-          </div>
-        ))}
+        {messages.map((msg, i) => {
+          const isLastStreaming = isStreaming && i === messages.length - 1;
+          const hasActivity = msg.role === 'assistant' && !!(msg.thinking || msg.toolCalls?.length);
+
+          return (
+            <div key={i}>
+              {hasActivity && (
+                <ActivityTimeline
+                  thinking={msg.thinking}
+                  toolCalls={msg.toolCalls}
+                  isStreaming={isLastStreaming}
+                />
+              )}
+              {(msg.content || (isLastStreaming && !hasActivity)) && (
+                <MessageBubble
+                  role={msg.role}
+                  content={msg.content}
+                  isStreaming={isLastStreaming && (!hasActivity || !!msg.content)}
+                />
+              )}
+            </div>
+          );
+        })}
       </div>
 
       {/* Input */}
@@ -183,6 +157,19 @@ export function ChatPane() {
         onCancel={handleCancel}
         disabled={isStreaming || !activeSessionId}
         isStreaming={isStreaming}
+        agents={agents}
+        selectedAgentId={selectedAgentId}
+        onAgentChange={setSelectedAgentId}
+        models={MODELS}
+        selectedModel={selectedModel}
+        onModelChange={setSelectedModel}
+        approvalLevel={approvalLevel}
+        onApprovalChange={setApprovalLevel}
+        enableThinking={enableThinking}
+        onThinkingToggle={() => setEnableThinking((v) => !v)}
+        sessionName={activeSession?.name}
+        tokensUsed={totalTokens}
+        maxTokens={MODELS[selectedModel]?.maxTokens ?? 200000}
       />
     </div>
   );

@@ -43,6 +43,16 @@ export function useAgent(sessionId: string | null) {
           store.addMessage(sessionId, { role: 'assistant', content: event.content });
         }
         store.setStreaming(sessionId, true);
+      } else if (event.type === 'thinking_delta') {
+        const sessionMessages = store.messages[sessionId] ?? [];
+        const lastMessage = sessionMessages[sessionMessages.length - 1];
+
+        if (lastMessage?.role === 'assistant') {
+          store.appendThinking(sessionId, event.content);
+        } else {
+          store.addMessage(sessionId, { role: 'assistant', content: '', thinking: event.content });
+        }
+        store.setStreaming(sessionId, true);
       } else if (event.type === 'tool_use_start') {
         store.addToolCall(sessionId, event.toolName, event.toolInput);
       } else if (event.type === 'tool_use_end') {
@@ -77,7 +87,7 @@ export function useAgent(sessionId: string | null) {
     };
   }, [sessionId]);
 
-  const sendMessage = async (content: string, provider?: ProviderName, model?: string, agentId?: string) => {
+  const sendMessage = async (content: string, provider?: ProviderName, model?: string, agentId?: string, enableThinking?: boolean, approvalLevel?: 'default' | 'confirm_all' | 'auto') => {
     if (!sessionId || !content.trim() || !window.electronAPI) return;
 
     useAgentStore.getState().addMessage(sessionId, { role: 'user', content });
@@ -89,6 +99,8 @@ export function useAgent(sessionId: string | null) {
         provider,
         model,
         agentId,
+        enableThinking,
+        approvalLevel,
       });
     } catch (error) {
       useAgentStore.getState().addMessage(sessionId, {

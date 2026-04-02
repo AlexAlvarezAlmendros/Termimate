@@ -45,6 +45,7 @@ export interface TokenUsage {
 
 export type StreamEvent =
   | { type: 'text_delta'; content: string }
+  | { type: 'thinking_delta'; content: string }
   | { type: 'tool_use_start'; toolName: string; toolInput: unknown }
   | { type: 'tool_use_end'; toolName: string; result: ToolResult }
   | { type: 'message_stop'; usage: TokenUsage }
@@ -60,6 +61,8 @@ export interface ToolContext {
   sessionId: string;
   projectRoot: string | null;
   outputBuffer: string | null;
+  spawnAgent?: (task: string, systemContext?: string) => Promise<string>;
+  askQuestion?: (requestId: string, payload: QuestionRequest) => Promise<string>;
 }
 
 export interface Message {
@@ -72,6 +75,8 @@ export interface Message {
   createdAt: number;
 }
 
+export type ApprovalLevel = 'default' | 'confirm_all' | 'auto' | 'plan';
+
 export interface SendMessageParams {
   sessionId: string;
   content: string;
@@ -79,11 +84,17 @@ export interface SendMessageParams {
   model?: string;
   agentId?: string;
   attachments?: string[];
+  enableThinking?: boolean;
+  approvalLevel?: ApprovalLevel;
 }
 
-export interface ConfirmRequest {
+export type ConfirmRequest =
+  | { requestId: string; type: 'bash_execute'; command: string; sessionId: string }
+  | { requestId: string; type: 'file_write'; path: string; content: string; sessionId: string }
+  | { requestId: string; type: 'directory_create'; path: string; sessionId: string };
+
+export interface QuestionRequest {
   requestId: string;
-  type: 'bash_execute';
-  command: string;
+  question: string;
   sessionId: string;
 }

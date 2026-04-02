@@ -1,6 +1,6 @@
 import type { PTYConfig, Session, CreateSessionDTO, UpdateSessionDTO } from './session.types';
 import type { Project, CreateProjectDTO, UpdateProjectDTO, ProjectDocument } from './project.types';
-import type { Agent, CreateAgentDTO, UpdateAgentDTO, SendMessageParams, StreamEvent, ConfirmRequest, Message } from './agent.types';
+import type { Agent, CreateAgentDTO, UpdateAgentDTO, SendMessageParams, StreamEvent, ConfirmRequest, QuestionRequest, Message } from './agent.types';
 
 // Renderer → Main (invoke/handle)
 export interface IPCInvokeChannels {
@@ -11,6 +11,7 @@ export interface IPCInvokeChannels {
 
   'agent:sendMessage': (params: SendMessageParams) => { streamId: string };
   'agent:confirmResponse': (requestId: string, approved: boolean) => void;
+  'agent:questionResponse': (requestId: string, answer: string) => void;
   'agent:list': () => Agent[];
   'agent:create': (dto: CreateAgentDTO) => Agent;
   'agent:update': (id: string, dto: UpdateAgentDTO) => Agent;
@@ -50,6 +51,7 @@ export interface IPCPushChannels {
   'pty:exit': (sessionId: string, exitCode: number) => void;
   'agent:streamEvent': (streamId: string, event: StreamEvent) => void;
   'agent:confirmRequest': (request: ConfirmRequest) => void;
+  'agent:questionRequest': (request: QuestionRequest) => void;
   'session:renamed': (sessionId: string, name: string) => void;
 }
 
@@ -90,7 +92,9 @@ export interface ElectronAPI {
     sendMessage: (params: SendMessageParams) => Promise<{ streamId: string }>;
     onStreamEvent: (callback: (streamId: string, event: StreamEvent) => void) => () => void;
     onConfirmRequest: (callback: (request: ConfirmRequest) => void) => () => void;
+    onQuestionRequest: (callback: (request: QuestionRequest) => void) => () => void;
     confirmResponse: (requestId: string, approved: boolean) => Promise<void>;
+    questionResponse: (requestId: string, answer: string) => Promise<void>;
     cancel: (streamId: string) => void;
     list: () => Promise<Agent[]>;
     create: (dto: CreateAgentDTO) => Promise<Agent>;

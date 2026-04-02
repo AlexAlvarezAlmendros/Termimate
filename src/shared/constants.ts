@@ -23,6 +23,8 @@ export const IPC_CHANNELS = {
   AGENT_CANCEL: 'agent:cancel',
   AGENT_CONFIRM_REQUEST: 'agent:confirmRequest',
   AGENT_CONFIRM_RESPONSE: 'agent:confirmResponse',
+  AGENT_QUESTION_REQUEST: 'agent:questionRequest',
+  AGENT_QUESTION_RESPONSE: 'agent:questionResponse',
 
   PROJECT_LIST: 'project:list',
   PROJECT_CREATE: 'project:create',

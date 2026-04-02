@@ -24,6 +24,7 @@ export function Sidenav({ onOpenSettings, view, onNavigate }: SidenavProps) {
   const renameInputRef = useRef<HTMLInputElement>(null);
   const [menuState, setMenuState] = useState<{ id: string; x: number; y: number } | null>(null);
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState<{ sessionId: string; name: string } | null>(null);
 
   const menuSession = menuState ? (sessions.find((s) => s.id === menuState.id) ?? null) : null;
 
@@ -83,11 +84,16 @@ export function Sidenav({ onOpenSettings, view, onNavigate }: SidenavProps) {
     setRenamingSessionId(null);
   };
 
-  const handleDeleteSession = async (sessionId: string) => {
+  const handleDeleteSession = (sessionId: string) => {
     const session = sessions.find((s) => s.id === sessionId);
-    if (!confirm(`Delete session "${session?.name ?? sessionId}" permanently? This cannot be undone.`)) return;
     setMenuState(null);
-    deleteSession(sessionId);
+    setDeleteConfirm({ sessionId, name: session?.name ?? sessionId });
+  };
+
+  const confirmDelete = () => {
+    if (!deleteConfirm) return;
+    deleteSession(deleteConfirm.sessionId);
+    setDeleteConfirm(null);
   };
 
   const handleAssignProject = async (sessionId: string, projectId: string | null) => {
@@ -111,18 +117,23 @@ export function Sidenav({ onOpenSettings, view, onNavigate }: SidenavProps) {
     sessionsByProject.get(key)!.push(session);
   }
 
+  const [hoveredSessionId, setHoveredSessionId] = useState<string | null>(null);
+
   const renderSessionItem = (session: typeof sessions[number]) => {
     const isInTab = openTabIds.includes(session.id);
     const isActive = session.id === activeSessionId && isInTab;
+    const isHovered = hoveredSessionId === session.id;
     return (
       <div
         key={session.id}
-        className={`group flex items-center gap-1.5 pl-6 pr-2 py-1.5 rounded-lg cursor-pointer transition-colors ${
+        className={`flex items-center gap-1.5 pl-6 pr-2 py-1.5 rounded-lg cursor-pointer transition-colors ${
           isActive
             ? 'bg-primary/10 text-primary'
             : 'text-outline/70 hover:bg-surface-container-high/50 hover:text-on-surface'
         }`}
         onClick={() => { openSession(session.id); onNavigate('terminal'); }}
+        onMouseEnter={() => setHoveredSessionId(session.id)}
+        onMouseLeave={() => setHoveredSessionId(null)}
       >
         {session.starred && (
           <span className="text-amber-400 text-[10px] shrink-0">★</span>
@@ -159,7 +170,8 @@ export function Sidenav({ onOpenSettings, view, onNavigate }: SidenavProps) {
             );
             setProjectPickerOpen(false);
           }}
-          className="shrink-0 opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-white/10 transition-all text-on-surface/60 hover:text-on-surface"
+          style={{ opacity: isHovered || menuState?.id === session.id ? 1 : 0, pointerEvents: isHovered || menuState?.id === session.id ? 'auto' : 'none' }}
+          className="shrink-0 p-1 rounded hover:bg-white/10 transition-colors text-on-surface/70 hover:text-on-surface"
           title="Options"
         >
           <DotsIcon />
@@ -359,6 +371,48 @@ export function Sidenav({ onOpenSettings, view, onNavigate }: SidenavProps) {
           )}
         </div>
       )}
+
+      {/* Delete confirmation modal */}
+      {deleteConfirm && (
+        <div className="fixed inset-0 z-300 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setDeleteConfirm(null)} />
+          <div className="relative w-full max-w-sm mx-4 bg-surface-container border border-outline-variant/20 rounded-2xl shadow-2xl overflow-hidden">
+            {/* Header */}
+            <div className="flex items-center gap-3 px-5 py-4 border-b border-outline-variant/10 bg-error/5">
+              <div className="w-8 h-8 rounded-full bg-error/15 flex items-center justify-center text-error shrink-0">
+                <TrashModalIcon />
+              </div>
+              <div>
+                <p className="text-sm font-bold text-on-surface">Delete session?</p>
+                <p className="text-xs text-outline">This action cannot be undone</p>
+              </div>
+            </div>
+            {/* Body */}
+            <div className="px-5 py-4">
+              <p className="text-sm text-on-surface/80">
+                Se eliminará permanentemente la sesión{' '}
+                <span className="font-semibold text-on-surface">"{deleteConfirm.name}"</span>{' '}
+                y todo su historial.
+              </p>
+            </div>
+            {/* Actions */}
+            <div className="flex items-center justify-end gap-3 px-5 py-4 border-t border-outline-variant/10">
+              <button
+                onClick={() => setDeleteConfirm(null)}
+                className="px-4 py-2 text-sm font-semibold text-on-surface border border-outline-variant/30 rounded-lg hover:bg-surface-container-high transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={confirmDelete}
+                className="px-4 py-2 text-sm font-semibold bg-error text-white rounded-lg hover:brightness-110 transition-all"
+              >
+                Eliminar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
@@ -428,6 +482,17 @@ function DotsIcon() {
       <circle cx="5" cy="12" r="2" />
       <circle cx="12" cy="12" r="2" />
       <circle cx="19" cy="12" r="2" />
+    </svg>
+  );
+}
+
+function TrashModalIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+      <path d="M10 11v6M14 11v6" />
+      <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
     </svg>
   );
 }

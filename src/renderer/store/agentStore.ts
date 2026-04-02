@@ -10,6 +10,7 @@ export interface ToolCall {
 export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
+  thinking?: string;
   toolCalls?: ToolCall[];
 }
 
@@ -20,6 +21,7 @@ interface AgentStore {
 
   addMessage: (sessionId: string, message: ChatMessage) => void;
   appendToLastMessage: (sessionId: string, content: string) => void;
+  appendThinking: (sessionId: string, content: string) => void;
   setStreaming: (sessionId: string, streaming: boolean) => void;
   isSessionStreaming: (sessionId: string) => boolean;
   clearMessages: (sessionId: string) => void;
@@ -53,6 +55,16 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
       return {
         messages: { ...state.messages, [sessionId]: updated },
       };
+    }),
+
+  appendThinking: (sessionId, content) =>
+    set((state) => {
+      const msgs = state.messages[sessionId] ?? [];
+      if (msgs.length === 0) return state;
+      const last = msgs[msgs.length - 1];
+      if (last.role !== 'assistant') return state;
+      const updated = [...msgs.slice(0, -1), { ...last, thinking: (last.thinking ?? '') + content }];
+      return { messages: { ...state.messages, [sessionId]: updated } };
     }),
 
   setStreaming: (sessionId, streaming) =>

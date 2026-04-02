@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { readdir, stat } from 'fs/promises';
-import { join } from 'path';
+import { join, isAbsolute } from 'path';
 import type { ITool } from './ITool';
 import type { ToolResult, ToolContext } from '../../../shared/types/agent.types';
 import { sanitizePath } from '../../security/PathSanitizer';
@@ -67,21 +67,23 @@ function formatTree(entries: FileEntry[], prefix = ''): string {
 
 export class FileListTool implements ITool {
   readonly name = 'file_list';
-  readonly description = 'List files and directories within the project. Use this to explore the project structure before reading specific files.';
+  readonly description = 'List files and directories within the project or current working directory. Use this to explore the file structure before reading specific files.';
   readonly inputSchema = inputSchema;
   readonly requiresConfirmation = false;
 
   async execute(input: unknown, context: ToolContext): Promise<ToolResult> {
     const parsed = inputSchema.parse(input);
-
-    if (!context.projectRoot) {
-      return { success: false, error: 'No project root configured. Please set a root path in the project settings.' };
-    }
+    const root = context.projectRoot ?? process.cwd();
 
     try {
-      const targetPath = parsed.path === '.' || !parsed.path
-        ? context.projectRoot
-        : sanitizePath(parsed.path, context.projectRoot);
+      let targetPath: string;
+      if (parsed.path === '.' || !parsed.path) {
+        targetPath = root;
+      } else if (isAbsolute(parsed.path)) {
+        targetPath = parsed.path;
+      } else {
+        targetPath = sanitizePath(parsed.path, root);
+      }
 
       const maxDepth = parsed.recursive ? parsed.maxDepth : 1;
       const entries = await listDir(targetPath, 1, maxDepth);

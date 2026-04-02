@@ -29,21 +29,38 @@ export class AnthropicProvider implements ILLMProvider {
   async *streamMessage(params: StreamMessageParams): AsyncIterable<StreamEvent> {
     const client = await this.getClient();
 
-    const stream = client.messages.stream({
+    const hasTools = !!(params.tools && params.tools.length > 0);
+    const maxTokens = params.enableThinking ? 16000 : 4096;
+    const thinkingBudget = params.enableThinking ? Math.floor(maxTokens * 0.8) : 0;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const requestBody: any = {
       model: params.model,
-      max_tokens: 4096,
+      max_tokens: maxTokens,
       system: params.systemPrompt,
       messages: params.messages,
-      ...(params.tools && params.tools.length > 0
+      ...(hasTools
         ? {
-            tools: params.tools.map((t) => ({
+            tools: params.tools!.map((t) => ({
               name: t.name,
               description: t.description,
               input_schema: t.inputSchema as Anthropic.Tool.InputSchema,
             })),
           }
         : {}),
-    });
+      ...(params.enableThinking
+        ? { thinking: { type: 'enabled', budget_tokens: thinkingBudget } }
+        : {}),
+    };
+
+    // Interleaved thinking with tools requires a beta header (passed as request option, not body)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const requestOptions: any =
+      params.enableThinking && hasTools
+        ? { headers: { 'anthropic-beta': 'interleaved-thinking-2025-05-14' } }
+        : {};
+
+    const stream = client.messages.stream(requestBody, requestOptions);
 
     // Track active tool blocks: index → { name, accumulatedInput }
     const toolBlocks = new Map<number, { name: string; accumulatedInput: string }>();
@@ -57,16 +74,20 @@ export class AnthropicProvider implements ILLMProvider {
           });
           // Don't emit yet — wait for full input at content_block_stop
         }
+        // thinking blocks are tracked via index via deltas below
       } else if (event.type === 'content_block_delta') {
-        const delta = event.delta;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const delta = event.delta as any;
 
-        if ('text' in delta) {
+        if (delta.type === 'text_delta') {
           yield { type: 'text_delta', content: delta.text };
         } else if (delta.type === 'input_json_delta') {
           const block = toolBlocks.get(event.index);
           if (block) {
             block.accumulatedInput += delta.partial_json;
           }
+        } else if (delta.type === 'thinking_delta') {
+          yield { type: 'thinking_delta', content: delta.thinking as string };
         }
       } else if (event.type === 'content_block_stop') {
         // Tool block complete — emit tool_use_start with full parsed input

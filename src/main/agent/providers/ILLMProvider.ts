@@ -5,6 +5,7 @@ export interface StreamMessageParams {
   systemPrompt: string;
   messages: Array<{ role: 'user' | 'assistant'; content: string }>;
   tools?: ToolDefinition[];
+  enableThinking?: boolean;
 }
 
 export interface ToolDefinition {

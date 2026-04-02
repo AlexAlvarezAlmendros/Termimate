@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import type { ConfirmRequest } from '../../../../shared/types/agent.types';
 
+const PREVIEW_CHARS = 800;
+
 export function ConfirmationDialog() {
   const [request, setRequest] = useState<ConfirmRequest | null>(null);
   const [responding, setResponding] = useState(false);
@@ -28,6 +30,8 @@ export function ConfirmationDialog() {
 
   if (!request) return null;
 
+  const { title, subtitle, preview } = getDialogContent(request);
+
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center pb-8 px-4 pointer-events-none">
       <div className="pointer-events-auto w-full max-w-lg bg-surface-container border border-outline-variant/20 rounded-2xl shadow-2xl overflow-hidden">
@@ -37,15 +41,15 @@ export function ConfirmationDialog() {
             <WarningIcon />
           </div>
           <div>
-            <p className="text-sm font-bold text-on-surface">Allow command execution?</p>
-            <p className="text-xs text-outline">The AI wants to run the following command</p>
+            <p className="text-sm font-bold text-on-surface">{title}</p>
+            <p className="text-xs text-outline">{subtitle}</p>
           </div>
         </div>
 
-        {/* Command preview */}
+        {/* Preview */}
         <div className="px-5 py-4">
-          <pre className="font-mono text-sm text-on-surface bg-surface-container-high rounded-lg px-4 py-3 overflow-x-auto whitespace-pre-wrap break-all border border-outline-variant/10">
-            {request.command}
+          <pre className="font-mono text-sm text-on-surface bg-surface-container-high rounded-lg px-4 py-3 overflow-x-auto whitespace-pre-wrap break-all border border-outline-variant/10 max-h-48 overflow-y-auto">
+            {preview.length > PREVIEW_CHARS ? preview.slice(0, PREVIEW_CHARS) + '\n…' : preview}
           </pre>
         </div>
 
@@ -69,6 +73,31 @@ export function ConfirmationDialog() {
       </div>
     </div>
   );
+}
+
+function getDialogContent(req: ConfirmRequest): { title: string; subtitle: string; preview: string } {
+  if (req.type === 'bash_execute') {
+    return {
+      title: 'Allow command execution?',
+      subtitle: 'The AI wants to run the following command',
+      preview: req.command,
+    };
+  }
+  if (req.type === 'file_write') {
+    return {
+      title: `Allow writing file?`,
+      subtitle: `The AI wants to write to: ${req.path}`,
+      preview: req.content,
+    };
+  }
+  if (req.type === 'directory_create') {
+    return {
+      title: 'Allow creating directory?',
+      subtitle: 'The AI wants to create the following directory',
+      preview: req.path,
+    };
+  }
+  return { title: 'Allow action?', subtitle: 'The AI wants to perform an action', preview: '' };
 }
 
 function WarningIcon() {

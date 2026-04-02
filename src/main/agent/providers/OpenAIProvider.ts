@@ -2,6 +2,7 @@ import OpenAI from 'openai';
 import type { ILLMProvider, StreamMessageParams } from './ILLMProvider';
 import type { StreamEvent, ModelDefinition } from '../../../shared/types/agent.types';
 import { getApiKey } from '../../security/KeychainService';
+import { ThinkingStreamParser, THINKING_SYSTEM_INSTRUCTION } from './ThinkingStreamParser';
 
 // Models that don't support function calling
 const NO_TOOLS_MODELS = new Set(['o1', 'o1-mini', 'o3-mini']);
@@ -35,13 +36,17 @@ export class OpenAIProvider implements ILLMProvider {
     const client = await this.getClient();
 
     const supportsTools = !NO_TOOLS_MODELS.has(params.model) && params.tools && params.tools.length > 0;
+    const systemPrompt = params.enableThinking
+      ? `${THINKING_SYSTEM_INSTRUCTION}\n\n${params.systemPrompt}`
+      : params.systemPrompt;
+    const parser = params.enableThinking ? new ThinkingStreamParser() : null;
 
     const stream = await client.chat.completions.create({
       model: params.model,
       stream: true,
       stream_options: { include_usage: true },
       messages: [
-        { role: 'system', content: params.systemPrompt },
+        { role: 'system', content: systemPrompt },
         ...params.messages.map((m) => ({
           role: m.role as 'user' | 'assistant',
           content: m.content,
@@ -83,13 +88,21 @@ export class OpenAIProvider implements ILLMProvider {
         }
       }
 
-      // Text delta
+      // Text delta — pipe through parser when thinking is enabled
       if (delta?.content) {
-        yield { type: 'text_delta', content: delta.content };
+        if (parser) {
+          for (const event of parser.process(delta.content)) yield event;
+        } else {
+          yield { type: 'text_delta', content: delta.content };
+        }
       }
 
-      // On finish, flush tool calls then emit message_stop
+      // On finish, flush parser + tool calls then emit message_stop
       if (finishReason === 'tool_calls' || finishReason === 'stop') {
+        if (parser) {
+          for (const event of parser.flush()) yield event;
+        }
+
         // Flush accumulated tool calls
         for (const [, entry] of toolCallMap) {
           let parsedInput: unknown = {};

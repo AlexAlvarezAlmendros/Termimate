@@ -4,6 +4,7 @@ import { Sidenav } from './components/layout/Sidenav/Sidenav';
 import { MainArea } from './components/layout/MainArea/MainArea';
 import { SettingsModal } from './components/settings/SettingsModal';
 import { ConfirmationDialog } from './components/agent/ConfirmationDialog';
+import { QuestionDialog } from './components/agent/QuestionDialog';
 import { useSessionStore } from './store/sessionStore';
 import { useProject } from './hooks/useProject';
 import { useAgentCrud } from './hooks/useAgentCrud';
@@ -120,6 +121,7 @@ export default function App() {
       </div>
       <SettingsModal isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <ConfirmationDialog />
+      <QuestionDialog />
     </div>
   );
 }

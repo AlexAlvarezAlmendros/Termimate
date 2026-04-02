@@ -81,37 +81,30 @@ export function useTerminalManager() {
       // Replay persisted scrollback from previous session (app restart)
       const savedScrollback = await window.electronAPI.pty.getScrollback(sessionId);
       if (savedScrollback) {
-        // Use xterm's write callback so we know the buffer is fully settled
-        // before trying to read from it.  setTimeout(0) is NOT enough because
-        // xterm defers rendering to requestAnimationFrame.
-        await new Promise<void>((r) => terminal.write(savedScrollback, r));
+        terminal.write(savedScrollback);
 
-        // Scan the ENTIRE buffer (scrollback + viewport) from the bottom to
-        // find the last row with actual content.  The raw PTY byte stream can
-        // leave the cursor at an arbitrary position well above the last line,
-        // creating a large blank gap before the new shell prompt.
+        // xterm processes writes asynchronously; wait a tick so the buffer is settled.
+        await new Promise<void>((r) => setTimeout(r, 0));
+
+        // Scan the visible viewport from the bottom to find the last row that
+        // actually has content.  The raw byte stream often leaves the cursor at
+        // an arbitrary position (e.g. \x1b[5;1H) that is well above the last
+        // visible content, creating a large empty gap before the new prompt.
         const buf = terminal.buffer.active;
-        const totalLines = buf.baseY + terminal.rows;
-        let lastContentViewportRow = -1;
-
-        for (let i = totalLines - 1; i >= 0; i--) {
-          const line = buf.getLine(i);
+        let lastContentRow = -1;
+        for (let y = terminal.rows - 1; y >= 0; y--) {
+          const line = buf.getLine(buf.baseY + y);
           if (line && line.translateToString(true).trim().length > 0) {
-            // Determine if this line falls within the current viewport
-            const vRow = i - buf.baseY;
-            lastContentViewportRow = vRow >= 0 && vRow < terminal.rows ? vRow : -1;
+            lastContentRow = y;
             break;
           }
         }
 
-        if (lastContentViewportRow >= 0 && lastContentViewportRow < terminal.rows - 1) {
-          // Move cursor to the line immediately after the last content line.
-          terminal.write(`\x1b[${lastContentViewportRow + 2};1H`);
-        } else if (lastContentViewportRow === -1) {
-          // All content is in scrollback; viewport is empty.  Move to row 1.
-          terminal.write('\x1b[1;1H');
+        if (lastContentRow >= 0 && lastContentRow < terminal.rows - 1) {
+          // Jump cursor to the line immediately after the last content so
+          // the new shell prompt has no empty-row gap above it.
+          terminal.write(`\x1b[${lastContentRow + 2};1H`);
         }
-        // If last content is the very last viewport row, \r\n below will scroll.
 
         terminal.write('\r\n');
       }
